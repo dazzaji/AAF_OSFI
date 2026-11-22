@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS issued (jti TEXT PRIMARY KEY, kind TEXT NOT NULL, cla
 CREATE INDEX IF NOT EXISTS issued_sub ON issued(sub);
 CREATE INDEX IF NOT EXISTS issued_agent ON issued(agent_id);
 CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, principal_id TEXT NOT NULL, counterparty TEXT NOT NULL, ticket TEXT NOT NULL, ticket_digest TEXT NOT NULL, details TEXT NOT NULL, grant_id TEXT NOT NULL, grant_version INTEGER NOT NULL, status TEXT NOT NULL, exp INTEGER NOT NULL, created INTEGER NOT NULL, decided_at INTEGER, evidence TEXT, UNIQUE(agent_id, ticket_digest));
-CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, counterparty TEXT NOT NULL, receipt TEXT NOT NULL, receipt_digest TEXT NOT NULL UNIQUE, sub TEXT NOT NULL, note TEXT, status TEXT NOT NULL, created INTEGER NOT NULL, released_at INTEGER, basis TEXT, disclosure TEXT, operator_id TEXT);
+CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, counterparty TEXT NOT NULL, receipt TEXT NOT NULL, receipt_digest TEXT NOT NULL UNIQUE, sub TEXT NOT NULL, id_jti TEXT NOT NULL, note TEXT, status TEXT NOT NULL, created INTEGER NOT NULL, released_at INTEGER, basis TEXT, disclosure TEXT, operator_id TEXT);
 CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, principal_id TEXT NOT NULL, ts INTEGER NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, to_addr TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, link TEXT);
 CREATE TABLE IF NOT EXISTS used_jti (jti TEXT PRIMARY KEY, exp INTEGER NOT NULL);
@@ -143,14 +143,19 @@ export async function createDirectory(cfg) {
   }
 
   // ---------- invitations and enrollment (PV-1, PV-3) ----------
-  async function createInvite(email, { isOperator = false } = {}) {
-    email = String(email ?? '').trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail(400, 'invalid_email');
+  // One bare mailbox, lower-cased. The same string is the delivery address and
+  // the identity that is recorded, so they cannot differ.
+  const mailbox = (raw) => { const e = String(raw ?? '').trim().toLowerCase(); if (e.length > 254 || !/^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e)) fail(400, 'invalid_email'); return e; };
+  async function createInvite(rawEmail, { isOperator = false } = {}) {
+    const email = mailbox(rawEmail);
     const token = randomId(24);
     const link = `${cfg.url}/?invite=${token}`;
-    const delivery = await sendMail(cfg, db, { to: email, subject: `Your invitation to ${cfg.name}`, body: `You have been invited to enroll as a principal in ${cfg.name}.\n\nOpen this single-use link within 48 hours:\n${link}\n\nRedeeming it shows that you control this mailbox.`, link });
-    db.run('INSERT INTO invites (token, email, is_operator, exp, created, delivery) VALUES (?,?,?,?,?,?)', token, email, isOperator ? 1 : 0, nowSec() + 48 * 3600, nowSec(), delivery);
-    logEvent('invite.created', { email, delivery });
+    // Recorded before anything is sent, so a delivered link is never unknown
+    // to the directory. A failed send withdraws it.
+    db.tx(() => { db.run('INSERT INTO invites (token, email, is_operator, exp, created, delivery) VALUES (?,?,?,?,?,?)', token, email, isOperator ? 1 : 0, nowSec() + 48 * 3600, nowSec(), 'pending'); logEvent('invite.created', { email }); });
+    let delivery;
+    try { delivery = await sendMail(cfg, db, { to: email, subject: `Your invitation to ${cfg.name}`, body: `You have been invited to enroll as a principal in ${cfg.name}.\n\nOpen this single-use link within 48 hours:\n${link}\n\nRedeeming it shows that you control this mailbox.`, link }); } catch (e) { db.tx(() => { db.run('DELETE FROM invites WHERE token = ?', token); logEvent('invite.delivery_failed', { email }); }); throw e; }
+    db.run('UPDATE invites SET delivery = ? WHERE token = ?', delivery, token);
     return { email, link: cfg.mode === 'local' ? link : undefined, delivery };
   }
   // How a principal was actually verified is recorded and later attested as is.
@@ -159,9 +164,9 @@ export async function createDirectory(cfg) {
     : inv.delivery?.startsWith('bootstrap')
       ? { method: 'operator bootstrap link from the service host; the mailbox was not verified', assurance: 'none' }
       : { method: 'LOCAL STAND-IN: link shown to the operator, not emailed; the mailbox was not verified', assurance: 'none (simulated)' });
-  const liveInvite = (token) => db.get('SELECT * FROM invites WHERE token = ? AND used_at IS NULL AND exp > ?', token, nowSec()) ?? fail(404, 'invite_invalid_or_used');
+  const liveInvite = (token) => db.get("SELECT * FROM invites WHERE token = ? AND used_at IS NULL AND delivery != 'pending' AND exp > ?", token, nowSec()) ?? fail(404, 'invite_invalid_or_used');
 
-  app.get('/api/invites/:token', (ctx) => { const inv = liveInvite(ctx.params.token); return { email: inv.email, is_operator: !!inv.is_operator }; });
+  app.get('/api/invites/:token', (ctx) => { const inv = liveInvite(ctx.params.token); const how = proofingFor(inv); return { email: inv.email, is_operator: !!inv.is_operator, proof_note: how.assurance === 'low' ? 'That whoever opened this single-use link could read that mailbox. It does not prove a legal identity.' : `Nothing about the mailbox: ${how.method}. The record will say so.` }; });
   app.post('/api/invites/:token/options', async (ctx) => {
     requireSameOrigin(ctx, origin);
     const inv = liveInvite(ctx.params.token);
@@ -180,7 +185,6 @@ export async function createDirectory(cfg) {
     try { result = await verifyRegistrationResponse({ response: ctx.body.response, expectedChallenge: cer.challenge, expectedOrigin: origin, expectedRPID: rpID, requireUserVerification: true }); } catch (e) { fail(400, 'passkey_registration_failed', { detail: e.message }); }
     if (!result.verified) fail(400, 'passkey_registration_failed');
     const cred = result.registrationInfo.credential;
-    const signedIn = session(ctx);
     const principalId = db.tx(() => {
       // The invite and the ceremony are each usable once.
       if (db.run('UPDATE invites SET used_at = ? WHERE token = ? AND used_at IS NULL', nowSec(), inv.token).changes !== 1) fail(409, 'invite_invalid_or_used');
@@ -193,11 +197,10 @@ export async function createDirectory(cfg) {
         const how = proofingFor(inv);
         db.run('INSERT INTO principals (id, identity_type, identity_value, method, assurance, is_operator, created) VALUES (?,?,?,?,?,?,?)', p.id, 'email', inv.email, how.method, how.assurance, inv.is_operator, nowSec());
       } else {
-        // Adding a passkey to an existing record needs that principal's own
-        // session. A link alone must not be able to take a record over.
-        if (signedIn?.id !== p.id) fail(409, 'principal_exists_sign_in_first');
-        if (inv.is_operator) db.run('UPDATE principals SET is_operator = 1 WHERE id = ?', p.id);
-        notify(p.id, 'security', 'A new passkey was added to your record.');
+        // One principal record per mailbox (PV-3), and in this pilot one passkey
+        // per record: neither a link nor a signed-in session can add another.
+        // Passkey recovery is out of scope.
+        fail(409, 'principal_already_enrolled');
       }
       db.run('INSERT INTO passkeys (cred_id, principal_id, public_key, counter, transports, created) VALUES (?,?,?,?,?,?)', cred.id, p.id, b64u(cred.publicKey), cred.counter, JSON.stringify(cred.transports ?? []), nowSec());
       logEvent('principal.enrolled', { principal: p.id, identity_type: 'email', delivery: inv.delivery });
@@ -338,7 +341,7 @@ export async function createDirectory(cfg) {
     },
     invite_create: {
       operator: true,
-      prepare(principal, args) { const email = String(args.email ?? '').trim().toLowerCase(); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail(400, 'invalid_email'); return { args: { email }, display: { title: 'Invite a principal', lines: [['Mailbox', email], ['Effect', 'A single-use link is sent to this mailbox only. Whoever redeems it becomes the verified principal for that address.']] } }; },
+      prepare(principal, args) { const email = mailbox(args.email); return { args: { email }, display: { title: 'Invite a principal', lines: [['Mailbox', email], ['Effect', 'A single-use link is sent to this mailbox only. Whoever redeems it becomes the verified principal for that address.']] } }; },
       async after(principal, args) { return createInvite(args.email); },
       execute() { return {}; },
     },
@@ -353,7 +356,7 @@ export async function createDirectory(cfg) {
       execute(principal, args) {
         const c = db.get("SELECT * FROM cases WHERE id = ? AND status = 'open'", args.case_id) ?? fail(409, 'case_not_found');
         // ES-1: the issuance record is the escrow. It is never deleted on revocation.
-        const row = db.get("SELECT * FROM issued WHERE sub = ? AND kind = 'id' AND aud = ? ORDER BY iat DESC LIMIT 1", c.sub, c.counterparty) ?? fail(409, 'id_not_found');
+        const row = db.get("SELECT * FROM issued WHERE jti = ? AND kind = 'id'", c.id_jti) ?? fail(409, 'id_not_found');
         const agent = db.get('SELECT * FROM agents WHERE id = ?', row.agent_id);
         const pr = db.get('SELECT * FROM principals WHERE id = ?', row.principal_id);
         const disclosure = { id: c.sub, issued_at: row.iat, issued_for: row.aud, agent: { label: agent.name, fingerprint: agent.fingerprint, status_now: agent.status, revoked_at: agent.revoked_at }, principal: { identity_type: pr.identity_type, identity: pr.identity_value, proofing_method: pr.method, assurance: pr.assurance } };
@@ -507,8 +510,12 @@ export async function createDirectory(cfg) {
     const rows = db.tx(() => {
       // Verification above awaited; a revocation may have landed meanwhile.
       // Re-read everything this issuance depends on before anything is stored.
-      if (db.get('SELECT status FROM agents WHERE id = ?', agent.id).status !== 'active') fail(403, 'registration_revoked');
+      const nowAgent = db.get('SELECT status, policy FROM agents WHERE id = ?', agent.id);
+      if (nowAgent.status !== 'active') fail(403, 'registration_revoked');
+      const nowPolicy = JSON.parse(nowAgent.policy);
       for (const c of claims) {
+        if (c.type === 'principal_verification' && !nowPolicy.share_verification) fail(409, 'policy_changed');
+        if (c.type === 'principal_identity' && !nowPolicy.share_identity_with.includes(aud)) fail(409, 'policy_changed');
         if (c.grant_id) { const g = db.get('SELECT status, version, exp FROM grants WHERE id = ?', c.grant_id); if (g.status !== 'active' || g.version !== c.grant_version || g.exp <= nowSec()) fail(409, 'grant_changed'); }
         if (c.approval_id && db.get('SELECT status FROM approvals WHERE id = ?', c.approval_id).status !== 'approved') fail(409, 'approval_changed');
       }
@@ -562,9 +569,13 @@ export async function createDirectory(cfg) {
     const existing = db.get('SELECT * FROM approvals WHERE agent_id = ? AND ticket_digest = ?', agent.id, ticketDigest);
     if (existing) return { approval_id: existing.id, status: existing.status, review_url: `${cfg.url}/?approval=${existing.id}` };
     const id = 'ap_' + randomId(12);
-    db.run('INSERT INTO approvals (id, agent_id, principal_id, counterparty, ticket, ticket_digest, details, grant_id, grant_version, status, exp, created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', id, agent.id, agent.principal_id, iss, ctx.body.ticket, ticketDigest, JSON.stringify({ action: t.action, params: t.params, summary: t.params, action_digest: t.action_digest }), g.id, g.version, 'pending', Math.min(t.exp, nowSec() + 600), nowSec());
-    logEvent('approval.requested', { approval: id, agent: agent.id, counterparty: iss, ticket_digest: ticketDigest });
-    return { approval_id: id, status: 'pending', review_url: `${cfg.url}/?approval=${id}` };
+    return db.tx(() => {
+      const again = db.get('SELECT * FROM approvals WHERE agent_id = ? AND ticket_digest = ?', agent.id, ticketDigest);
+      if (again) return { approval_id: again.id, status: again.status, review_url: `${cfg.url}/?approval=${again.id}` };
+      db.run('INSERT INTO approvals (id, agent_id, principal_id, counterparty, ticket, ticket_digest, details, grant_id, grant_version, status, exp, created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', id, agent.id, agent.principal_id, iss, ctx.body.ticket, ticketDigest, JSON.stringify({ action: t.action, params: t.params, summary: t.params, action_digest: t.action_digest }), g.id, g.version, 'pending', Math.min(t.exp, nowSec() + 600), nowSec());
+      logEvent('approval.requested', { approval: id, agent: agent.id, counterparty: iss, ticket_digest: ticketDigest });
+      return { approval_id: id, status: 'pending', review_url: `${cfg.url}/?approval=${id}` };
+    });
   });
   app.get('/api/approvals/:id', async (ctx) => {
     const agent = await requireAgent(ctx, { allowRevoked: true });
@@ -584,13 +595,15 @@ export async function createDirectory(cfg) {
     // a case; a copied ID that failed that check must not expose its owner.
     if (r.holder_verified !== true) fail(400, 'receipt_without_holder_verification');
     // And only the counterparty the ID was issued for can report it.
-    const row = db.get("SELECT * FROM issued WHERE sub = ? AND kind = 'id' AND aud = ? ORDER BY iat DESC LIMIT 1", String(r.id ?? ''), iss) ?? fail(404, 'id_not_issued_to_this_counterparty');
+    // Bound to the one issuance the receipt names (a stable per-shop ID is
+    // issued many times; each issuance has its own serial).
+    const row = db.get("SELECT * FROM issued WHERE jti = ? AND sub = ? AND kind = 'id' AND aud = ?", String(r.id_jti ?? ''), String(r.id ?? ''), iss) ?? fail(404, 'id_not_issued_to_this_counterparty');
     const receiptDigest = sha256b64u(ctx.body.receipt);
     return db.tx(() => {
       const existing = db.get('SELECT id FROM cases WHERE receipt_digest = ?', receiptDigest);
       if (existing) return { case_ref: existing.id };
       const id = 'case_' + randomId(6);
-      db.run('INSERT INTO cases (id, counterparty, receipt, receipt_digest, sub, note, status, created) VALUES (?,?,?,?,?,?,?,?)', id, iss, ctx.body.receipt, receiptDigest, r.id, String(ctx.body.note ?? '').slice(0, 500), 'open', nowSec());
+      db.run('INSERT INTO cases (id, counterparty, receipt, receipt_digest, sub, id_jti, note, status, created) VALUES (?,?,?,?,?,?,?,?,?)', id, iss, ctx.body.receipt, receiptDigest, r.id, row.jti, String(ctx.body.note ?? '').slice(0, 500), 'open', nowSec());
       logEvent('case.opened', { case: id, counterparty: iss, sub: r.id, receipt_digest: receiptDigest });
       notify(row.principal_id, 'incident', `A counterparty (${iss}) reported an incident involving one of your agents. Case ${id}. Your identity has not been released.`);
       return { case_ref: id };

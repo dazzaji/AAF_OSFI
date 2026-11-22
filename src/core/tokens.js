@@ -2,6 +2,7 @@
 // explicit `typ`, so a token made for one purpose cannot be replayed as another.
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { SignJWT, jwtVerify, generateKeyPair, exportJWK, importJWK, calculateJwkThumbprint, decodeJwt, decodeProtectedHeader } from 'jose';
 
 export const TYP = {
@@ -45,6 +46,15 @@ export async function verify(token, publicJwk, typ) {
   const key = await importJWK({ kty: publicJwk.kty, crv: publicJwk.crv, x: publicJwk.x }, 'EdDSA');
   const { payload, protectedHeader } = await jwtVerify(token, key, { algorithms: ['EdDSA'], typ, currentDate: new Date(0) });
   return { payload, header: protectedHeader };
+}
+
+// Synchronous signing, for use inside a database transaction so that a record
+// and its signed receipt are written together or not at all.
+export function signSync(typ, payload, privateJwk) {
+  const key = crypto.createPrivateKey({ key: { kty: privateJwk.kty, crv: privateJwk.crv, x: privateJwk.x, d: privateJwk.d }, format: 'jwk' });
+  const head = Buffer.from(JSON.stringify({ alg: 'EdDSA', typ, kid: privateJwk.kid })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `${head}.${body}.${crypto.sign(null, Buffer.from(`${head}.${body}`), key).toString('base64url')}`;
 }
 
 export const peek = (token) => ({ payload: decodeJwt(token), header: decodeProtectedHeader(token) });

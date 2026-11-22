@@ -4,7 +4,7 @@
     "name": "Sandbox Print Shop",
     "url": "https://shop.example",
     "mode": "local",
-    "now": 1795341841
+    "now": 1795342542
   },
   "viewer": {
     "role": "admin"
@@ -59,7 +59,7 @@
       "issuer": "https://directory.example",
       "name": "AAF Pilot Directory",
       "status_rev": 1,
-      "status_age": 1,
+      "status_age": 0,
       "fresh": true,
       "max_age": 18,
       "error": null
@@ -68,11 +68,11 @@
   "decisions": [
     {
       "seq": 5,
-      "ts": 1795341840,
+      "ts": 1795342542,
       "action": "shop.order",
       "decision": "step_up",
       "reason": "approval_required",
-      "id": "id_Fvr0KTjoz1xaKid9F6MarQ",
+      "id": "id_iUD7AH5igghKNhtCd6Kenw",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [
@@ -93,6 +93,7 @@
       "status_age": 0,
       "params": {
         "sku": "cards-5000",
+        "item": "Business cards, run of 5,000",
         "qty": 1,
         "total": 480,
         "currency": "USD"
@@ -107,24 +108,24 @@
       "learned": [
         "An accountable ID (single-use) issued by https://directory.example",
         "Authorization: shop.order up to USD 500, attested by the directory",
-        "Principal verified by email control, low assurance, attested by the directory"
+        "Principal verified by email control, none (simulated) assurance, attested by the directory"
       ],
       "not_learned": [
         "The principal's name, email or any other identity",
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "gcyQitlZYPnx",
+      "receipt_ref": "m8Nsm4UkXDX0",
       "case_ref": null,
       "can_report": true
     },
     {
       "seq": 4,
-      "ts": 1795341840,
+      "ts": 1795342542,
       "action": "shop.order",
       "decision": "step_up",
       "reason": "claim_required",
-      "id": "id_QTYjMuzgNbFtc3gV_mUxzA",
+      "id": "id_wS5OxJU7EV0BWP6q8MtpMg",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [],
@@ -132,6 +133,7 @@
       "status_age": 0,
       "params": {
         "sku": "cards-5000",
+        "item": "Business cards, run of 5,000",
         "qty": 1,
         "total": 480,
         "currency": "USD"
@@ -160,17 +162,17 @@
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "wnGAGl0SJDYn",
+      "receipt_ref": "ufC188I67iUL",
       "case_ref": null,
       "can_report": true
     },
     {
       "seq": 3,
-      "ts": 1795341840,
+      "ts": 1795342542,
       "action": "shop.order",
       "decision": "granted",
       "reason": "authorized",
-      "id": "id_varF0YnFSL_-nzOYAj36Dw",
+      "id": "id_pqYDsHlSoAEQe3uMeTjopQ",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [
@@ -191,35 +193,36 @@
       "status_age": 0,
       "params": {
         "sku": "cards-500",
+        "item": "Business cards, box of 500",
         "qty": 1,
         "total": 38,
         "currency": "USD"
       },
       "result": {
-        "order_id": "ord_5aBbNP0L"
+        "order_id": "ord_l6txupyW"
       },
       "required": null,
       "learned": [
         "An accountable ID (single-use) issued by https://directory.example",
         "Authorization: shop.order up to USD 500, attested by the directory",
-        "Principal verified by email control, low assurance, attested by the directory"
+        "Principal verified by email control, none (simulated) assurance, attested by the directory"
       ],
       "not_learned": [
         "The principal's name, email or any other identity",
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "Ibxli9LE0OuR",
+      "receipt_ref": "2B1fmY3aXUvb",
       "case_ref": null,
       "can_report": true
     },
     {
       "seq": 2,
-      "ts": 1795341840,
+      "ts": 1795342542,
       "action": "shop.order",
       "decision": "step_up",
       "reason": "claim_required",
-      "id": "id_ws5SZGd-EZqEhr2cC1QpfQ",
+      "id": "id_iYPyLkLXqjdK2Q6pgXWbIg",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [],
@@ -227,6 +230,7 @@
       "status_age": 0,
       "params": {
         "sku": "cards-500",
+        "item": "Business cards, box of 500",
         "qty": 1,
         "total": 38,
         "currency": "USD"
@@ -255,17 +259,17 @@
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "FokiUyIyis3T",
+      "receipt_ref": "o9a7eoPhSpbq",
       "case_ref": null,
       "can_report": true
     },
     {
       "seq": 1,
-      "ts": 1795341840,
+      "ts": 1795342542,
       "action": "shop.quote",
       "decision": "granted",
       "reason": "valid_id",
-      "id": "id_RFjLci9_8IXbmBaAsX3bWg",
+      "id": "id_2NWNrAQ4JM62nHKW6Xeo6Q",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [],
@@ -273,10 +277,13 @@
       "status_age": 0,
       "params": {
         "sku": "cards-500",
-        "qty": 1
+        "item": "Business cards, box of 500",
+        "qty": 1,
+        "total": 38,
+        "currency": "USD"
       },
       "result": {
-        "quote_id": "q_BxBDvqPg"
+        "quote_id": "q_wBZmDHeo"
       },
       "required": null,
       "learned": [
@@ -287,15 +294,15 @@
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "i3ZoWP8_FpX-",
+      "receipt_ref": "CPRdjKD3TkL5",
       "case_ref": null,
       "can_report": true
     }
   ],
   "orders": [
     {
-      "id": "ord_5aBbNP0L",
-      "ts": 1795341840,
+      "id": "ord_l6txupyW",
+      "ts": 1795342542,
       "sku": "cards-500",
       "qty": 1,
       "total": 38,

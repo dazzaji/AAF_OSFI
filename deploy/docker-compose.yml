@@ -1,0 +1,59 @@
+# The pilot on one host: directory + shop, each with its own state and key.
+# Nothing is published on a host port. Put a tunnel or reverse proxy in front
+# (see docs/DEPLOYING.md). Copy deploy/.env.example to deploy/.env first.
+#   docker compose -p aaf-pilot -f deploy/docker-compose.yml up -d --build
+#   docker compose -p aaf-pilot -f deploy/docker-compose.yml down        (rollback; data volumes are kept)
+name: aaf-pilot
+services:
+  directory:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: ["node", "src/directory/server.js"]
+    env_file: .env
+    environment:
+      AAF_DIRECTORY_PORT: "4100"
+      AAF_DIRECTORY_DATA: /data
+    volumes:
+      - directory-data:/data
+      - ../skins:/app/skins:ro          # drop a new skin file here; it appears without a restart
+      - ../datasets:/app/datasets:ro
+    healthcheck: { test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 15s, timeout: 5s, retries: 4 }
+    mem_limit: 384m
+    cpus: 0.5
+    pids_limit: 128
+    restart: unless-stopped
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    networks: [pilot]
+  shop:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: ["node", "src/shop/server.js"]
+    env_file: .env
+    environment:
+      AAF_SHOP_PORT: "4200"
+      AAF_SHOP_DATA: /data
+      AAF_SHOP_POLICY: /app/config/shop-policy.json
+    volumes:
+      - shop-data:/data
+      - ../skins:/app/skins:ro
+      - ../datasets:/app/datasets:ro
+      - ../config:/app/config:ro        # edit shop-policy.json to change thresholds while running
+    depends_on: { directory: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4200/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 15s, timeout: 5s, retries: 4 }
+    mem_limit: 384m
+    cpus: 0.5
+    pids_limit: 128
+    restart: unless-stopped
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    networks: [pilot]
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment: { TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN}" }
+    depends_on: [directory, shop]
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    restart: unless-stopped
+    networks: [pilot]
+    profiles: [tunnel]
+volumes: { directory-data: {}, shop-data: {} }
+networks: { pilot: {} }

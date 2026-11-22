@@ -23,6 +23,7 @@ async function bundle(key, build) {
   return bundles.get(key);
 }
 const runtimeJs = () => bundle('runtime', () => esbuild.build({ entryPoints: [path.join(here, 'frame-runtime.js')], bundle: true, format: 'iife', minify: true, write: false, define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent' }));
+const tailwindJs = () => fs.readFileSync(path.join(here, '../../node_modules/@tailwindcss/browser/dist/index.global.js'));
 const webauthnJs = () => bundle('webauthn', () => esbuild.build({ stdin: { contents: "export { startRegistration, startAuthentication } from '@simplewebauthn/browser';", resolveDir: here }, bundle: true, format: 'esm', minify: true, write: false, logLevel: 'silent' }));
 
 // A skin may import only React. Everything else is refused at build time.
@@ -30,7 +31,10 @@ const reactShim = {
   name: 'aaf-react-shim',
   setup(build) {
     build.onResolve({ filter: /^react(\/jsx-runtime|\/jsx-dev-runtime)?$/ }, (a) => ({ path: a.path, namespace: 'aaf-shim' }));
-    build.onResolve({ filter: /^[^./]/ }, (a) => (a.kind === 'entry-point' ? null : { errors: [{ text: `Skins may import only "react". Found: ${a.path}` }] }));
+    // Nothing else may be pulled into the bundle: not other packages, and not
+    // files by relative or absolute path (which could be service keys or data).
+    // Type-only imports are erased before this point and are unaffected.
+    build.onResolve({ filter: /.*/ }, (a) => (a.kind === 'entry-point' ? null : { errors: [{ text: `Skins may import only "react". Found: ${a.path}` }] }));
     build.onLoad({ filter: /.*/, namespace: 'aaf-shim' }, (a) => ({ contents: a.path === 'react' ? 'module.exports = window.__AAF.React;' : 'module.exports = window.__AAF.jsx;', loader: 'js' }));
   },
 };
@@ -58,15 +62,17 @@ export function mountUi(app, { surface, projectRoot, title, mode, origin }) {
   const dataDir = path.join(projectRoot, 'datasets', surface);
   const SHELL_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
   // "sandbox" in the header forces an opaque origin even if someone opens the
-  // frame page directly in a tab. connect-src 'none' stops a skin sending the
-  // display data anywhere.
-  const FRAME_CSP = `sandbox allow-scripts; default-src 'none'; script-src ${origin} 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'`;
+  // frame page directly in a tab. Scripts load only from this service (styling
+  // is served locally, not from a CDN) and connect-src is 'none', so a skin has
+  // no way to send the display data to another host.
+  const FRAME_CSP = `sandbox allow-scripts; default-src 'none'; script-src ${origin}; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'`;
 
   app.get('/', (ctx) => send(ctx.res, 200, Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title.replace(/[<&]/g, '')}</title><link rel="stylesheet" href="/ui/shell.css"></head><body data-surface="${surface}" data-mode="${mode}" data-title="${title.replace(/["<&]/g, '')}"><div id="app"></div><script type="module" src="/ui/shell.js"></script></body></html>`), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': SHELL_CSP, 'referrer-policy': 'no-referrer' }));
   app.get('/ui/shell.js', (ctx) => serveFile(ctx.res, path.join(here, 'shell.js')));
   app.get('/ui/shell.css', (ctx) => serveFile(ctx.res, path.join(here, 'shell.css')));
   app.get('/ui/webauthn.js', async (ctx) => send(ctx.res, 200, Buffer.from(await webauthnJs()), { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'max-age=3600' }));
-  app.get('/ui/frame.html', (ctx) => send(ctx.res, 200, Buffer.from('<!doctype html><html><head><meta charset="utf-8"><script src="https://cdn.tailwindcss.com"></script><style>html,body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:#f8fafc;color:#0f172a}</style></head><body><div id="root"></div><script src="/ui/frame-runtime.js"></script></body></html>'), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': FRAME_CSP }));
+  app.get('/ui/frame.html', (ctx) => send(ctx.res, 200, Buffer.from('<!doctype html><html><head><meta charset="utf-8"><script src="/ui/tailwind.js"></script><style>html,body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:#f8fafc;color:#0f172a}</style></head><body><div id="root"></div><script src="/ui/frame-runtime.js"></script></body></html>'), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': FRAME_CSP }));
+  app.get('/ui/tailwind.js', (ctx) => send(ctx.res, 200, tailwindJs(), { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'max-age=3600' }));
   app.get('/ui/frame-runtime.js', async (ctx) => send(ctx.res, 200, Buffer.from(await runtimeJs()), { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'max-age=3600' }));
   app.get('/ui/skins/:file', async (ctx) => {
     const name = ctx.params.file.replace(/\.js$/, '');

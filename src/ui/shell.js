@@ -104,7 +104,7 @@ async function enroll(token) {
       closeModal(); history.replaceState(null, '', location.pathname); say('You are enrolled and signed in.', 'ok'); await refreshData(true);
     } catch (e) { go.disabled = false; say(explain(e), 'error'); }
   } }, 'Create my passkey');
-  modal(inv.is_operator ? 'Enroll as directory operator' : 'Enroll as a principal', el('div', {}, el('table', { class: 'kv' }, el('tr', {}, el('th', {}, 'Mailbox'), el('td', {}, inv.email)), el('tr', {}, el('th', {}, 'What this proves'), el('td', {}, 'That whoever opened this single-use link controls that mailbox. It does not prove a legal identity.'))), el('p', {}, 'You will create a passkey on this device. It is how you sign in and how you approve anything your agents ask for.')), [go]);
+  modal(inv.is_operator ? 'Enroll as directory operator' : 'Enroll as a principal', el('div', {}, el('table', { class: 'kv' }, el('tr', {}, el('th', {}, 'Mailbox'), el('td', {}, inv.email)), el('tr', {}, el('th', {}, 'What this establishes'), el('td', {}, inv.proof_note))), el('p', {}, 'You will create a passkey on this device. It is how you sign in and how you approve anything your agents ask for.')), [go]);
 }
 
 // ---------- actions a skin may request ----------
@@ -113,13 +113,18 @@ async function enroll(token) {
 function withSignIn(next) {
   if (state.view?.viewer?.role !== 'public') return next();
   const go = el('button', { class: 'btn primary', onclick: async () => { go.disabled = true; if (await signIn()) { closeModal(); next(); } else go.disabled = false; } }, 'Sign in with passkey');
-  modal('Sign in to continue', el('p', {}, 'Your agent sent you here. Sign in with your passkey to see the request.'), [el('button', { class: 'btn', onclick: closeModal }, 'Not now'), go]);
+  modal('Sign in to continue', el('p', {}, 'Sign in with your passkey to continue.'), [el('button', { class: 'btn', onclick: closeModal }, 'Not now'), go]);
 }
+async function doDecline(id) { try { await api('POST', `/api/approvals/${encodeURIComponent(id)}/decline`, {}); say('Declined.', 'ok'); refreshData(true); } catch (e) { say(explain(e), 'error'); } }
+// A skin can only ask. Anything with a consequence waits for a click on a
+// button the shell drew.
+function askShell(title, text, label, onYes) { modal(title, el('p', {}, text), [el('button', { class: 'btn', onclick: closeModal }, 'Cancel'), el('button', { class: 'btn primary', onclick: () => { closeModal(); onYes(); } }, label)]); }
 const DIRECTORY_ACTIONS = {
-  signIn, signOut,
+  signIn: () => withSignIn(() => {}),
+  signOut: () => askShell('Sign out?', 'You will need your passkey to sign in again.', 'Sign out', signOut),
   reviewPairing: (id) => reviewPairing(String(id)),
   reviewApproval: (id) => reviewApproval(String(id)),
-  declineApproval: async (id) => { await api('POST', `/api/approvals/${encodeURIComponent(id)}/decline`, {}); say('Declined.', 'ok'); refreshData(true); },
+  declineApproval: (id) => askShell('Decline this request?', 'The agent will be told you said no. Nothing will be done.', 'Decline', () => doDecline(id)),
   grant: (agentId) => formModal('Set an authorization', 'You will confirm the exact terms on the next screen.', [{ name: 'action', label: 'Action', value: 'shop.order' }, { name: 'max_amount', label: 'Limit per action (USD)', type: 'number', value: '100' }, { name: 'days', label: 'Lasts (days)', type: 'number', value: '30' }], 'Continue', (v) => confirmOp('grant_create', { agent_id: String(agentId), action: v.action, max_amount: Number(v.max_amount), days: Number(v.days) })),
   revokeGrant: (id) => confirmOp('grant_revoke', { grant_id: String(id) }),
   revokeAgent: (id) => confirmOp('agent_revoke', { agent_id: String(id) }),
@@ -145,7 +150,7 @@ async function showPairing(id) {
   ], 'Continue', (v) => confirmOp('pair_approve', { pairing_id: id, grant: v.grant ? { action: 'shop.order', max_amount: Number(v.max_amount), days: 30 } : null, policy: { share_verification: v.share_verification, share_identity_with: [] } }, { onDone: () => history.replaceState(null, '', location.pathname) }));
 }
 function reviewApproval(id) {
-  withSignIn(() => confirmOp('approval_approve', { approval_id: id }, { declineLabel: 'Decline', onDecline: () => DIRECTORY_ACTIONS.declineApproval(id), onDone: () => { history.replaceState(null, '', location.pathname); modal('Approved', el('p', {}, 'Go back to your agent and tell it to continue.'), [el('button', { class: 'btn primary', onclick: closeModal }, 'Close')]); } }));
+  withSignIn(() => confirmOp('approval_approve', { approval_id: id }, { declineLabel: 'Decline', onDecline: () => doDecline(id), onDone: () => { history.replaceState(null, '', location.pathname); modal('Approved', el('p', {}, 'Go back to your agent and tell it to continue.'), [el('button', { class: 'btn primary', onclick: closeModal }, 'Close')]); } }));
 }
 
 // ---------- the sandboxed frame ----------
@@ -161,6 +166,8 @@ window.addEventListener('message', (e) => {
   const fn = Object.hasOwn(ACTIONS, m.name) ? ACTIONS[m.name] : null;
   if (!fn) { say(`This design asked for something the page does not offer (${m.name.slice(0, 40)}).`, 'error'); return; }
   if (state.source !== 'live') { say('Sample data is showing. Switch Data to "Live" to act.', 'info'); return; }
+  // A trusted screen that is already open is never replaced or dismissed by a skin.
+  if (!modalHost.hidden) return;
   const args = Array.isArray(m.args) ? m.args.slice(0, 1).map((a) => (typeof a === 'string' || typeof a === 'number' ? a : undefined)) : [];
   Promise.resolve(fn(...args)).catch((err) => say(explain(err), 'error'));
 });

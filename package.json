@@ -23,6 +23,7 @@
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@simplewebauthn/browser": "^14.0.0",
     "@simplewebauthn/server": "^14.1.0",
+    "@tailwindcss/browser": "^4.3.5",
     "esbuild": "^0.28.2",
     "jose": "^6.2.18",
     "react": "^19.3.1",

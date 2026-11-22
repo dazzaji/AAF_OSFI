@@ -4,7 +4,7 @@
     "name": "AAF Pilot Directory",
     "url": "https://directory.example",
     "mode": "local",
-    "now": 1795341841
+    "now": 1795342542
   },
   "viewer": {
     "role": "operator",
@@ -15,9 +15,9 @@
     "identity_proofing": [
       {
         "type": "email",
-        "method": "A single-use, expiring invitation link sent only to the asserted mailbox. Redeeming it establishes control of that mailbox at that moment.",
+        "method": "A single-use, expiring invitation link emailed only to the asserted mailbox. Redeeming it establishes control of that mailbox at that moment.",
         "assurance": "low",
-        "note": "Not legal-person or human identity proofing (PV-2 is not offered)."
+        "note": "Not legal-person or human identity proofing (PV-2 is not offered). Anyone who can read that mailbox, or who is handed the link, can redeem it. Each principal record states how it was actually verified; records made on a local build or from the operator bootstrap link say so and carry no assurance."
       }
     ],
     "sybil_resistance": "One principal record per verified email address in this directory.",
@@ -41,15 +41,17 @@
     "signing_key": "One online Ed25519 key held on the service host. No hardware protection, no offline root, manual rotation.",
     "what_the_directory_learns": "The counterparty each ID is issued for and when, the claims requested, and each action a principal approves. IDs are unlinkable to counterparties, not to this directory. Entries revoked together in the status list can reveal that they belong together.",
     "records_kept": "Principal record, agent records, every issued ID with its agent and principal, grants, approvals, revocations, cases and disclosures.",
-    "retention": "Pilot records are kept for 30 days after the pilot closes, then deleted. Records survive revocation.",
+    "retention": "Records are kept for the life of the pilot and survive revocation. There is no automatic deletion: the operator deletes the pilot data by hand when the pilot closes.",
     "release_process": "An affected counterparty submits a signed decision receipt. An authenticated operator releases the agent label and verified identity for the IDs named in that receipt only, with a recorded basis, and the principal is notified. In this pilot the lawful request is a labelled simulation, not a real legal process.",
+    "transport": "Requests are protected in transit by TLS on the hosted build. A presentation is bound to one request and one counterparty-issued nonce, not to the connection it travels on (Appendix C section 2, option 1).",
     "stand_ins": [
-      "Invitation emails are written to a local outbox instead of being sent."
+      "Invitation links are shown to the operator in a local outbox instead of being emailed, so no mailbox control is established and records say so.",
+      "The directory, the shop and the agent run under one user account on one computer. An agent with file access could read service keys. Separation between agent and services exists only on the hosted build."
     ]
   },
   "status": {
     "rev": 1,
-    "published_at": 1795341840,
+    "published_at": 1795342542,
     "uri": "https://directory.example/.well-known/aaf-status"
   },
   "public": {
@@ -61,17 +63,17 @@
     "identity": {
       "type": "email",
       "value": "sample.principal@example.test",
-      "method": "invitation link redeemed from the mailbox",
-      "assurance": "low"
+      "method": "LOCAL STAND-IN: link shown to the operator, not emailed; the mailbox was not verified",
+      "assurance": "none (simulated)"
     },
     "agents": [
       {
-        "id": "ag_Hr2CvBAltZsn",
+        "id": "ag_JV1F7I32DIzg",
         "name": "Sample coding agent",
         "harness": "sample",
-        "fingerprint": "B552HUlqBYhAkDLN",
+        "fingerprint": "6rtxjVqBWQfGxWjA",
         "status": "active",
-        "created": 1795341840,
+        "created": 1795342542,
         "revoked_at": null,
         "revoked_by": null,
         "policy": {
@@ -79,16 +81,16 @@
           "share_identity_with": []
         },
         "ids_issued": 5,
-        "last_issued": 1795341840,
+        "last_issued": 1795342542,
         "grants": [
           {
-            "id": "gr_gJXgAz124Jhm",
+            "id": "gr_3M8yceAlZR4_",
             "action": "shop.order",
             "max_amount": 500,
             "currency": "USD",
             "version": 1,
             "status": "active",
-            "exp": 1797933840,
+            "exp": 1797934542,
             "revoked_at": null
           }
         ]
@@ -97,30 +99,32 @@
     "pending_pairings": [],
     "pending_approvals": [
       {
-        "id": "ap_jcg4rqasSIB2fGoA",
+        "id": "ap_RDenYIs9zQzImxOk",
         "counterparty": "https://shop.example",
         "agent_name": "Sample coding agent",
-        "exp": 1795342440,
+        "exp": 1795343142,
         "action": "shop.order",
         "params": {
           "sku": "cards-5000",
+          "item": "Business cards, run of 5,000",
           "qty": 1,
           "total": 480,
           "currency": "USD"
         },
         "summary": {
-          "Item": "Business cards, run of 5,000",
-          "Quantity": 1,
-          "Total": "USD 480.00",
-          "Shop": "Sandbox Print Shop"
+          "sku": "cards-5000",
+          "item": "Business cards, run of 5,000",
+          "qty": 1,
+          "total": 480,
+          "currency": "USD"
         },
-        "action_digest": "i2KBd928madKu1EKcEm-s8YvDiIAaomR07zBtt9NjzI"
+        "action_digest": "jF2Z4-frPhaAStvC_plmde954I2y0CvgykGEXVFUjIM"
       }
     ],
     "recent_approvals": [],
     "notifications": [
       {
-        "ts": 1795341840,
+        "ts": 1795342542,
         "kind": "agent",
         "text": "Agent \"Sample coding agent\" was registered."
       }
@@ -129,113 +133,112 @@
   "operator": {
     "principals": [
       {
-        "id": "pr_G6mEVX2mVgNq",
+        "id": "pr_WMeScVS9rZjK",
         "identity_type": "email",
         "identity_value": "operator@example.test",
-        "assurance": "low",
+        "assurance": "none",
         "is_operator": 1,
-        "created": 1795341840,
+        "created": 1795342542,
         "agents": 0
       },
       {
-        "id": "pr_ZuMohr1nEXl5",
+        "id": "pr_xhWvdopLN3iw",
         "identity_type": "email",
         "identity_value": "sample.principal@example.test",
-        "assurance": "low",
+        "assurance": "none (simulated)",
         "is_operator": 0,
-        "created": 1795341840,
+        "created": 1795342542,
         "agents": 1
       }
     ],
     "all_agents": [
       {
-        "id": "ag_Hr2CvBAltZsn",
+        "id": "ag_JV1F7I32DIzg",
         "name": "Sample coding agent",
         "status": "active",
-        "fingerprint": "B552HUlqBYhAkDLN",
+        "fingerprint": "6rtxjVqBWQfGxWjA",
         "principal": "sample.principal@example.test"
       }
     ],
     "invites": [
       {
         "email": "operator@example.test",
-        "exp": 1795946640,
-        "used_at": 1795341840,
-        "created": 1795341840,
+        "exp": 1795947342,
+        "used_at": 1795342542,
+        "created": 1795342542,
         "delivery": "bootstrap file on the service host"
       },
       {
         "email": "sample.principal@example.test",
-        "exp": 1795514640,
-        "used_at": 1795341840,
-        "created": 1795341840,
+        "exp": 1795515342,
+        "used_at": 1795342542,
+        "created": 1795342542,
         "delivery": "local outbox (stand-in, not real delivery)"
       }
     ],
     "outbox": [
       {
-        "ts": 1795341840,
+        "ts": 1795342542,
         "to_addr": "sample.principal@example.test",
         "subject": "Your invitation to AAF Pilot Directory",
-        "link": "https://directory.example/?invite=zWNvhtUhetU6LwHNJ98oGvWYpz1k2pIg"
+        "link": "https://directory.example/?invite=Mr8uwC8uSQOZUDBAskF5Ytcxlwy9UadU"
       }
     ],
     "cases": [],
     "events": [
       {
         "seq": 5,
-        "ts": 1795341840,
+        "ts": 1795342542,
         "type": "approval.requested",
         "data": {
-          "approval": "ap_jcg4rqasSIB2fGoA",
-          "agent": "ag_Hr2CvBAltZsn",
+          "approval": "ap_RDenYIs9zQzImxOk",
+          "agent": "ag_JV1F7I32DIzg",
           "counterparty": "https://shop.example",
-          "ticket_digest": "Vj0qiqyPIyvE1f8kicoQ7E_Hhg58FUNGbnrER9L0Eus"
+          "ticket_digest": "WmoJVF4pDzbkqtA-3e7BKfmkw-cl3Xy5L8orHdsj-iQ"
         },
-        "hash": "NwGbyyNZUC9K1Vup7QS00wfixEXkz1yAetD_uqU0bFo"
+        "hash": "KASbCJfDC7B9y3tFUuw9h8L3p9NPbyYqmROd6kqWz-E"
       },
       {
         "seq": 4,
-        "ts": 1795341840,
+        "ts": 1795342542,
         "type": "agent.registered",
         "data": {
-          "agent": "ag_Hr2CvBAltZsn",
-          "principal": "pr_ZuMohr1nEXl5",
-          "fingerprint": "B552HUlqBYhAkDLN"
+          "agent": "ag_JV1F7I32DIzg",
+          "principal": "pr_xhWvdopLN3iw",
+          "fingerprint": "6rtxjVqBWQfGxWjA"
         },
-        "hash": "8tE5IAO1w6q76rdO7RF3eNx7U_8RJifcN0fb12UJaxk"
+        "hash": "B8A2TJpkNw-bpGGvfNFO2tfExf9mxgnwPTZv11u7VYU"
       },
       {
         "seq": 3,
-        "ts": 1795341840,
+        "ts": 1795342542,
         "type": "principal.enrolled",
         "data": {
-          "principal": "pr_ZuMohr1nEXl5",
+          "principal": "pr_xhWvdopLN3iw",
           "identity_type": "email",
           "delivery": "local outbox (stand-in, not real delivery)"
         },
-        "hash": "mm_gV6u3EFfRIbrLxGF1zuAAtzm7TRjndgnlrFToSYU"
+        "hash": "CwyfIrEn5bDXbGBFB1kQDeup-cQf6Ku437Ncc0tcRTY"
       },
       {
         "seq": 2,
-        "ts": 1795341840,
+        "ts": 1795342542,
         "type": "invite.created",
         "data": {
-          "email": "sample.principal@example.test",
-          "delivery": "local outbox (stand-in, not real delivery)"
+          "email": "sample.principal@example.test"
         },
-        "hash": "hckN7ETK4KbiDvKMFAjsi09zS_5hVRIGRdaBuHOHyK4"
+        "hash": "RfG4fUVhE8zzqaJ8LAjtPTQ4DSC2YE-msBgxe0S98YM"
       },
       {
         "seq": 1,
-        "ts": 1795341840,
+        "ts": 1795342542,
         "type": "principal.enrolled",
         "data": {
-          "principal": "pr_G6mEVX2mVgNq",
+          "principal": "pr_WMeScVS9rZjK",
           "identity_type": "email",
           "delivery": "bootstrap file on the service host"
         },
-        "hash": "yv8frAw9xxw514Uf2iKnyDZStZvk9lsOR1W8MmHhY_8"
+        "hash": "l-6-9vPoIaPcQG_uvWkzQmom_VV3PxiznVvts3meSMc"
       }
     ]
   },

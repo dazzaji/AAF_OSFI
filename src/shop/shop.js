@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createApp, setCookie, requireSameOrigin } from '../core/http.js';
 import { openDb } from '../core/db.js';
-import { TYP, loadOrCreateKey, sign, verify, peek } from '../core/tokens.js';
+import { TYP, loadOrCreateKey, sign, signSync, verify, peek } from '../core/tokens.js';
 import { sha256b64u, randomId, nowSec, digestOf, unb64u, fail, HttpError } from '../core/util.js';
 import { decodeList, getBit } from '../core/statuslist.js';
 import { mountUi } from '../ui/mount.js';
@@ -97,7 +97,7 @@ export async function createShop(cfg) {
     const dirKey = t.keys.find((k) => k.kid === idPeek.header.kid);
     if (!dirKey) throw new Decision('denied', 'issuer_key_unknown', { ev });
     let id; try { id = (await verify(pres.id, dirKey, TYP.id)).payload; } catch { throw new Decision('denied', 'id_signature_invalid', { ev }); }
-    ev.id = id.sub; ev.id_mode = id.id_mode;
+    ev.id = id.sub; ev.id_jti = id.jti; ev.id_mode = id.id_mode;
     if (id.aud !== cfg.url) throw new Decision('denied', 'wrong_audience', { ev });
     if (id.exp <= now - cfg.clockSkew) throw new Decision('denied', 'id_expired', { ev });
     if (id.iat > now + cfg.clockSkew) throw new Decision('denied', 'id_not_yet_valid', { ev });
@@ -113,6 +113,7 @@ export async function createShop(cfg) {
     if (Math.abs(now - proof.iat) > 60) throw new Decision('denied', 'proof_stale', { ev });
     if (db.run('UPDATE challenges SET used = 1 WHERE nonce = ? AND used = 0 AND exp > ?', String(proof.nonce ?? ''), now).changes !== 1) throw new Decision('denied', 'nonce_invalid_or_replayed', { ev });
     ev.holder_verified = true; // from here on, the presenter is known to hold the ID's key
+    ev.op = typeof proof.op === 'string' ? proof.op.slice(0, 80) : null; // the agent's signed operation ID
 
     // 3. Status, from the cached whole list. If the list is older than the
     // agreed budget the honest answer is "I cannot tell", and nothing is written.
@@ -142,12 +143,12 @@ export async function createShop(cfg) {
           else if (c.aud !== cfg.url) entry.reason = 'wrong_audience';
           else if (c.exp <= now - cfg.clockSkew) entry.reason = 'claim_expired';
           else if (getBit(t.status.bits, c.status.idx)) entry.reason = 'claim_revoked';
-          else { entry.accepted = true; entry.idx = c.status.idx; }
+          else { entry.accepted = true; entry.idx = c.status.idx; entry.exp = c.exp; }
         }
       } catch { entry.reason = 'claim_signature_invalid'; }
       claims.push(entry);
     }
-    ev.claims = claims.map(({ value, idx, ...rest }) => ({ ...rest, value: rest.type === 'principal_identity' || rest.type === 'principal_verification' || rest.type === 'authorization' ? value : undefined }));
+    ev.claims = claims.map(({ value, idx, exp, ...rest }) => ({ ...rest, value: rest.type === 'principal_identity' || rest.type === 'principal_verification' || rest.type === 'authorization' ? value : undefined }));
     return { id, claims, ev, issuerName: t.name };
   }
 
@@ -159,15 +160,21 @@ export async function createShop(cfg) {
     if (!t?.status || now - t.status.iat > cfg.statusAcceptAge + cfg.clockSkew) throw new Decision('deferred', 'status_too_old');
     if (v.id.exp <= now - cfg.clockSkew) throw new Decision('denied', 'id_expired');
     if (getBit(t.status.bits, v.id.status.idx)) throw new Decision('denied', 'id_revoked');
-    for (const c of usedClaims) if (c && getBit(t.status.bits, c.idx)) throw new Decision('step_up', 'claim_required', { required: [{ type: c.type, not_accepted_because: ['claim_revoked'] }] });
+    for (const c of usedClaims) {
+      if (!c) continue;
+      if (c.exp <= now - cfg.clockSkew) throw new Decision('step_up', 'claim_required', { required: [{ type: c.type, not_accepted_because: ['claim_expired'] }] });
+      if (getBit(t.status.bits, c.idx)) throw new Decision('step_up', 'claim_required', { required: [{ type: c.type, not_accepted_because: ['claim_revoked'] }] });
+    }
+    v.ev.status = { rev: t.status.rev, age: now - t.status.iat }; // the snapshot that governed the write
   }
 
   // ---------- recording and answering ----------
   // Every protected decision gets a signed receipt that names the exact action
   // and parameters, whether the answer was yes, no, or "I need more".
-  async function record(action, decision, reason, ev, extra = {}) {
+  // Signed synchronously so a write and its receipt commit in one transaction.
+  function record(action, decision, reason, ev, extra = {}) {
     const actionDigest = extra.action_digest ?? null;
-    const receipt = await sign(TYP.receipt, { iss: cfg.url, iat: nowSec(), jti: randomId(), action, params: extra.params ?? null, action_digest: actionDigest, decision, reason, holder_verified: ev?.holder_verified === true, id: ev?.id ?? null, id_issuer: ev?.issuer ?? null, id_mode: ev?.id_mode ?? null, claims: (ev?.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status: ev?.status ?? null, result: extra.result ?? null }, key.privateJwk);
+    const receipt = signSync(TYP.receipt, { iss: cfg.url, iat: nowSec(), jti: randomId(), action, params: extra.params ?? null, action_digest: actionDigest, decision, reason, holder_verified: ev?.holder_verified === true, id: ev?.id ?? null, id_jti: ev?.id_jti ?? null, id_issuer: ev?.issuer ?? null, id_mode: ev?.id_mode ?? null, claims: (ev?.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status: ev?.status ?? null, result: extra.result ?? null }, key.privateJwk);
     return { receipt, detail: { ev: ev ?? null, params: extra.params ?? null, result: extra.result ?? null, required: extra.required ?? null } };
   }
   const saveDecision = (action, decision, reason, rec) => db.run('INSERT INTO decisions (ts, action, decision, reason, detail, receipt) VALUES (?,?,?,?,?,?)', nowSec(), action, decision, reason, JSON.stringify(rec.detail), rec.receipt);
@@ -186,8 +193,7 @@ export async function createShop(cfg) {
         if (!(e instanceof Decision)) throw e;
         const ev = e.extra.ev ?? verified?.ev ?? null;
         e.extra = { ...base, ...e.extra };
-        const rec = await record(action, e.decision, e.reason, ev, e.extra);
-        saveDecision(action, e.decision, e.reason, rec);
+        const rec = db.tx(() => { const r = record(action, e.decision, e.reason, ev, e.extra); saveDecision(action, e.decision, e.reason, r); return r; });
         const { ev: _omit, ...publicExtra } = e.extra;
         throw new HttpError(e.reason === 'presentation_required' ? 401 : STATUS_FOR[e.decision], e.reason, { decision: e.decision, ...publicExtra, receipt: rec.receipt });
       }
@@ -207,15 +213,14 @@ export async function createShop(cfg) {
   // A read-only check: "is this ID good right now?" Writes nothing but the
   // decision record. Used to show revocation without risking an order.
   app.post('/api/check', protectedRoute('shop.check', () => ({}), async (ctx, v, base) => {
-    const rec = await record('shop.check', 'granted', 'valid_id', v.ev, base);
+    const rec = record('shop.check', 'granted', 'valid_id', v.ev, base);
     saveDecision('shop.check', 'granted', 'valid_id', rec);
     return { decision: 'granted', receipt: rec.receipt };
   }));
 
   app.post('/api/quotes', protectedRoute('shop.quote', orderParams, async (ctx, v, base) => {
     const quote = { quote_id: 'q_' + randomId(6), ...base.params };
-    const rec = await record('shop.quote', 'granted', 'valid_id', v.ev, { ...base, result: { quote_id: quote.quote_id } });
-    db.tx(() => { recheckAtCommit(v, []); db.run('INSERT INTO quotes (id, ts, sku, qty, total, id_sub) VALUES (?,?,?,?,?,?)', quote.quote_id, nowSec(), quote.sku, quote.qty, quote.total, v.id.sub); saveDecision('shop.quote', 'granted', 'valid_id', rec); });
+    const rec = db.tx(() => { recheckAtCommit(v, []); const r = record('shop.quote', 'granted', 'valid_id', v.ev, { ...base, result: { quote_id: quote.quote_id } }); db.run('INSERT INTO quotes (id, ts, sku, qty, total, id_sub) VALUES (?,?,?,?,?,?)', quote.quote_id, nowSec(), quote.sku, quote.qty, quote.total, v.id.sub); saveDecision('shop.quote', 'granted', 'valid_id', r); return r; });
     return { decision: 'granted', quote, receipt: rec.receipt };
   }));
 
@@ -257,13 +262,15 @@ export async function createShop(cfg) {
 
     // Write once. Consuming the approval, creating the order and storing the
     // receipt commit together; an identical retry gets the original receipt.
-    const idem = ticketDigest ? 'ticket:' + ticketDigest : (ctx.headers['idempotency-key'] ? 'key:' + String(ctx.headers['idempotency-key']).slice(0, 80) + ':' + actionDigest : null);
+    // The operation ID is part of the signed proof, so nobody in between can
+    // change it. The same operation is written once, however it is retried.
+    const idem = v.ev.op ? 'op:' + v.ev.op + ':' + actionDigest : ticketDigest ? 'ticket:' + ticketDigest : null;
     const orderId = 'ord_' + randomId(6);
-    const rec = await record('shop.order', 'granted', ticketDigest ? 'authorized_and_approved' : 'authorized', v.ev, { ...base, result: { order_id: orderId } });
     const out = db.tx(() => {
-      const prior = idem && db.get('SELECT * FROM orders WHERE idem = ?', idem);
+      const prior = (idem && db.get('SELECT * FROM orders WHERE idem = ?', idem)) || (ticketDigest && db.get('SELECT o.* FROM orders o JOIN tickets t ON t.order_id = o.id WHERE t.digest = ?', ticketDigest));
       if (prior) return { order_id: prior.id, receipt: prior.receipt, repeated: true };
       recheckAtCommit(v, [auth, accepted('principal_verification'), ticketDigest ? accepted('approval') : null]);
+      const rec = record('shop.order', 'granted', ticketDigest ? 'authorized_and_approved' : 'authorized', v.ev, { ...base, result: { order_id: orderId } });
       db.run('INSERT INTO orders (id, ts, sku, qty, total, currency, id_sub, approved, idem, receipt) VALUES (?,?,?,?,?,?,?,?,?,?)', orderId, nowSec(), it.sku, qty, total, p.currency, v.id.sub, ticketDigest ? 1 : 0, idem, rec.receipt);
       if (ticketDigest) db.run('UPDATE tickets SET order_id = ? WHERE digest = ?', orderId, ticketDigest);
       saveDecision('shop.order', 'granted', ticketDigest ? 'authorized_and_approved' : 'authorized', rec);
