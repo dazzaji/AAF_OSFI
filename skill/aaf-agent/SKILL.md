@@ -27,6 +27,8 @@ aaf-agent continue
 aaf-agent recheck
 ```
 
+**If you have MCP tools named `aaf_status`, `aaf_register`, `aaf_shop` and `aaf_continue`, use those instead of the command.** They do the same things and return the same JSON (`aaf_shop` takes `operation`: `catalog`, `quote` or `order`, with `sku` and `qty`). Prefer them whenever your shell is sandboxed: the command needs to write to its own folder in the user's home directory, and a sandboxed shell may refuse with `cannot_write_agent_home`.
+
 If `aaf-agent` is not on the PATH, run `node <repo>/src/agent/cli.js` instead. If `status` says `not_initialised`, ask the user for the directory and shop addresses and run `aaf-agent init <directory-url> --shop <shop-url>`.
 
 ## How each result reads, and what to tell the user
