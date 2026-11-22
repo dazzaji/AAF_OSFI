@@ -6,8 +6,19 @@ import { HttpError } from './util.js';
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
-export function createApp({ name }) {
+export function createApp({ name, rateLimit = 0, trustProxy = false }) {
   const routes = [];
+  // A plain per-address limit (requests a minute). Behind the tunnel the
+  // client address is the one Cloudflare reports; a client-supplied
+  // X-Forwarded-For is never used.
+  const hits = new Map();
+  if (rateLimit) setInterval(() => hits.clear(), 60_000).unref();
+  const limited = (req) => {
+    if (!rateLimit) return false;
+    const who = (trustProxy && req.headers['cf-connecting-ip']) || req.socket.remoteAddress || 'unknown';
+    const n = (hits.get(who) ?? 0) + 1; hits.set(who, n);
+    return n > rateLimit;
+  };
   const add = (method, pattern, handler) => {
     const keys = [];
     const re = new RegExp('^' + pattern.replace(/:[a-zA-Z_]+/g, (m) => { keys.push(m.slice(1)); return '([^/]+)'; }) + '$');
@@ -21,6 +32,7 @@ export function createApp({ name }) {
       try {
         const url = new URL(req.url, 'http://x');
         ctx = { req, res, url, path: url.pathname, query: url.searchParams, params: {}, cookies: parseCookies(req.headers.cookie), rawBody: '', body: null, headers: req.headers };
+        if (req.url !== '/healthz' && limited(req)) return send(res, 429, { error: 'rate_limited' }, { 'retry-after': '60' });
         if (req.method === 'OPTIONS') return send(res, 204, null, { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST' });
         if (req.method === 'POST') {
           ctx.rawBody = await readBody(req);

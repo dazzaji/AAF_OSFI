@@ -13,13 +13,15 @@ import { TYP, loadOrCreateKey, sign, verify, peek, thumbprint } from '../core/to
 import { b64u, unb64u, sha256, sha256b64u, randomId, nowSec, canonical, digestOf, userCode, fail } from '../core/util.js';
 import { emptyList, setBit, encodeList, randomFreeIndex } from '../core/statuslist.js';
 import { mountUi } from '../ui/mount.js';
-import { sendMail } from './mailer.js';
+import { createTransport, mailMode, readKeyFile } from './mailer.js';
+import { safeFetch, schemeAllowed, originList, isLocalhost } from '../core/net.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, identity_type TEXT NOT NULL, identity_value TEXT NOT NULL, method TEXT NOT NULL, assurance TEXT NOT NULL, is_operator INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, UNIQUE(identity_type, identity_value));
 CREATE TABLE IF NOT EXISTS passkeys (cred_id TEXT PRIMARY KEY, principal_id TEXT NOT NULL, public_key TEXT NOT NULL, counter INTEGER NOT NULL, transports TEXT, created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, principal_id TEXT NOT NULL, exp INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS invites (token TEXT PRIMARY KEY, email TEXT NOT NULL, is_operator INTEGER NOT NULL DEFAULT 0, exp INTEGER NOT NULL, used_at INTEGER, created INTEGER NOT NULL, delivery TEXT);
+CREATE TABLE IF NOT EXISTS invites (token TEXT PRIMARY KEY, email TEXT NOT NULL, is_operator INTEGER NOT NULL DEFAULT 0, exp INTEGER NOT NULL, used_at INTEGER, created INTEGER NOT NULL, delivery TEXT, state TEXT, idem_key TEXT, attempts INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS mail_sends (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS ceremonies (id TEXT PRIMARY KEY, kind TEXT NOT NULL, principal_id TEXT, challenge TEXT NOT NULL, op TEXT, args TEXT, display TEXT, exp INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS pairings (id TEXT PRIMARY KEY, user_code TEXT NOT NULL, name TEXT NOT NULL, harness TEXT, public_jwk TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, exp INTEGER NOT NULL, agent_id TEXT, created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, principal_id TEXT NOT NULL, name TEXT NOT NULL, harness TEXT, public_jwk TEXT NOT NULL, fingerprint TEXT NOT NULL UNIQUE, status TEXT NOT NULL, policy TEXT NOT NULL, created INTEGER NOT NULL, revoked_at INTEGER, revoked_by TEXT);
@@ -54,12 +56,34 @@ export function directoryConfig(env = process.env) {
     retentionDays: 30,
     smtp: env.AAF_SMTP_URL ?? null,
     mailFrom: env.AAF_MAIL_FROM ?? null,
+    // The Resend key is read from a file where possible, so it is not in the environment.
+    resendKey: env.AAF_RESEND_KEY_FILE ? readKeyFile(env.AAF_RESEND_KEY_FILE) : (env.AAF_RESEND_API_KEY || null),
+    mailDailyCap: Math.min(Math.max(Number(env.AAF_MAIL_DAILY_CAP ?? 50), 1), 200),
+    mailRetryWindow: Number(env.AAF_MAIL_RETRY_WINDOW ?? 600),          // seconds; well inside the provider's 24 h idempotency window
+    mailRetryDelays: (env.AAF_MAIL_RETRY_DELAYS ?? '20,60').split(',').map(Number), // waits before the 2nd and 3rd attempt
+    inviteFallback: env.AAF_INVITE_FALLBACK ?? null,                     // 'operator-link': show the link to the operator when no mail is configured
+    // Counterparties whose signed requests and reports this directory will fetch keys for.
+    trustedCounterparties: env.AAF_TRUSTED_COUNTERPARTIES ? originList(env.AAF_TRUSTED_COUNTERPARTIES) : null,
+    staging: env.AAF_STAGING === '1',   // private staging only: allows plain-HTTP localhost origins
+    trustProxy: env.AAF_TRUST_PROXY === '1',
+    rateLimit: Number(env.AAF_RATE_LIMIT ?? ((env.AAF_ENV ?? 'local') === 'local' ? 0 : 600)), // requests a minute per address; 0 = off
     projectRoot: env.AAF_PROJECT_ROOT ?? path.resolve('.'),
   };
 }
 
-export async function createDirectory(cfg) {
+export async function createDirectory(cfg, { mailFetch } = {}) {
+  // A hosted directory must be told its public HTTPS address and which
+  // counterparties it serves. Localhost is accepted only on a staging run.
+  if (cfg.mode !== 'local') {
+    if (!schemeAllowed(cfg.url, cfg)) throw new Error('AAF_DIRECTORY_URL must be an https address on a hosted build');
+    if (!cfg.trustedCounterparties?.length) throw new Error('AAF_TRUSTED_COUNTERPARTIES must be set on a hosted build');
+    for (const o of cfg.trustedCounterparties) if (!schemeAllowed(o, cfg) || (isLocalhost(o) && !cfg.staging)) throw new Error('AAF_TRUSTED_COUNTERPARTIES must be https addresses on a hosted build');
+  }
   const db = openDb(path.join(cfg.dataDir, 'directory.sqlite'), SCHEMA);
+  // Databases made before invitations had an explicit state.
+  const inviteCols = db.all('PRAGMA table_info(invites)').map((c) => c.name);
+  if (!inviteCols.includes('state')) { db.raw.exec("ALTER TABLE invites ADD COLUMN state TEXT; ALTER TABLE invites ADD COLUMN idem_key TEXT; ALTER TABLE invites ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;"); db.raw.exec("UPDATE invites SET state = CASE WHEN delivery LIKE 'bootstrap%' THEN 'bootstrap' WHEN delivery LIKE 'local%' THEN 'local' WHEN delivery = 'pending' THEN 'failed' ELSE 'accepted' END"); }
+  const transport = createTransport(cfg, { fetchImpl: mailFetch });
   const key = await loadOrCreateKey(path.join(cfg.dataDir, 'signing-key.json'));
   const secretFile = path.join(cfg.dataDir, 'secrets.json');
   if (!fs.existsSync(secretFile)) fs.writeFileSync(secretFile, JSON.stringify({ pairwise: randomId(32), grantRef: randomId(32) }), { mode: 0o600 });
@@ -67,7 +91,7 @@ export async function createDirectory(cfg) {
   const rpID = new URL(cfg.url).hostname;
   const origin = new URL(cfg.url).origin;
   const SESSION_COOKIE = 'aafdir_session';
-  const app = createApp({ name: 'directory' });
+  const app = createApp({ name: 'directory', rateLimit: cfg.rateLimit, trustProxy: cfg.trustProxy });
   const hmac = (secret, text) => b64u(crypto.createHmac('sha256', secret).update(text).digest()).slice(0, 22);
 
   // ---------- evidence log (DR-2) ----------
@@ -102,7 +126,8 @@ export async function createDirectory(cfg) {
   // ---------- published practices (DR-1) ----------
   const practices = () => ({
     kind: 'AAF lifecycle pilot. Not production. Not a conformity claim.',
-    identity_proofing: [{ type: 'email', method: 'A single-use, expiring invitation link emailed only to the asserted mailbox. Redeeming it establishes control of that mailbox at that moment.', assurance: 'low', note: 'Not legal-person or human identity proofing (PV-2 is not offered). Anyone who can read that mailbox, or who is handed the link, can redeem it. Each principal record states how it was actually verified; records made on a local build or from the operator bootstrap link say so and carry no assurance.' }],
+    identity_proofing: [{ type: 'email', method: 'A single-use, expiring invitation link emailed only to the asserted mailbox. Redeeming it establishes control of that mailbox at that moment.', assurance: 'low', note: 'Not legal-person or human identity proofing (PV-2 is not offered). Anyone who can read that mailbox, or who is handed the link, can redeem it. Each principal record states how it was actually verified. Assurance is recorded only when a link the mail provider accepted is redeemed. Records made on a local build, from the operator bootstrap link, or from a link the operator handed over instead of emailing say so and carry no assurance.' }],
+    invitation_delivery: transport.mode,
     sybil_resistance: 'One principal record per verified email address in this directory.',
     principal_authentication: 'Passkey (WebAuthn) with user verification required. Registering an agent, granting authority, approving an action and revoking each need a fresh assertion.',
     agent_authentication: 'Ed25519 key generated by the agent. Proof of possession at registration, at every issuance, and on every request to a counterparty.',
@@ -115,7 +140,7 @@ export async function createDirectory(cfg) {
     retention: 'Records are kept for the life of the pilot and survive revocation. There is no automatic deletion: the operator deletes the pilot data by hand when the pilot closes.',
     release_process: 'An affected counterparty submits a signed decision receipt. An authenticated operator releases the agent label and verified identity for the IDs named in that receipt only, with a recorded basis, and the principal is notified. In this pilot the lawful request is a labelled simulation, not a real legal process.',
     transport: 'Requests are protected in transit by TLS on the hosted build. A presentation is bound to one request and one counterparty-issued nonce, not to the connection it travels on (Appendix C section 2, option 1).',
-    stand_ins: cfg.mode === 'local' ? ['Invitation links are shown to the operator in a local outbox instead of being emailed, so no mailbox control is established and records say so.', 'The directory, the shop and the agent run under one user account on one computer. An agent with file access could read service keys. Separation between agent and services exists only on the hosted build.'] : [],
+    stand_ins: transport.mode === 'operator-link' ? ['Invitation links are shown once to the directory operator instead of being emailed, because no mail service is configured. No mailbox control is established and records say so.'] : cfg.mode === 'local' ? ['Invitation links are shown to the operator in a local outbox instead of being emailed, so no mailbox control is established and records say so.', 'The directory, the shop and the agent run under one user account on one computer. An agent with file access could read service keys. Separation between agent and services exists only on the hosted build.'] : [],
   });
 
   // ---------- sessions and passkeys (PV-5) ----------
@@ -135,6 +160,7 @@ export async function createDirectory(cfg) {
   }
   const passkeysOf = (principalId) => db.all('SELECT * FROM passkeys WHERE principal_id = ?', principalId);
   async function verifyAssertion(response, expectedChallenge) {
+    if (typeof response?.id !== 'string') fail(401, 'passkey_verification_failed');
     const pk = db.get('SELECT * FROM passkeys WHERE cred_id = ?', response?.id) ?? fail(401, 'unknown_passkey');
     let result;
     try {
@@ -149,33 +175,68 @@ export async function createDirectory(cfg) {
   // One bare mailbox, lower-cased. The same string is the delivery address and
   // the identity that is recorded, so they cannot differ.
   const mailbox = (raw) => { const e = String(raw ?? '').trim().toLowerCase(); if (e.length > 254 || !/^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e)) fail(400, 'invalid_email'); return e; };
+  // An invitation has one explicit state. Only some states can be redeemed.
+  //   pending     email is being sent; not redeemable yet
+  //   accepted    the mail provider accepted the message
+  //   shown       no mail service: the link was shown once to the operator
+  //   local       local build stand-in (outbox)
+  //   bootstrap   first-run operator link from the service host
+  //   failed      sending did not succeed inside the retry window
+  //   superseded  a newer invitation was made for the same mailbox
+  const REDEEMABLE = "('accepted','shown','local','bootstrap')";
+  const LABEL = { pending: 'email is being sent', accepted: 'emailed to the mailbox (accepted by the mail service)', shown: 'link shown once to the operator; not emailed', local: 'local outbox (stand-in, not real delivery)', bootstrap: 'bootstrap file on the service host', failed: 'email could not be sent; invite again', superseded: 'replaced by a newer invitation' };
+  const setState = (token, state, from = null) => db.run(`UPDATE invites SET state = ?, delivery = ? WHERE token = ?${from ? ' AND state = ?' : ''}`, ...[state, LABEL[state], token, ...(from ? [from] : [])]).changes === 1;
+  const inviteMail = (email, token) => ({ to: email, subject: `Your invitation to ${cfg.name}`, body: `You have been invited to enroll as a principal in ${cfg.name}.\n\nOpen this single-use link within 48 hours:\n${cfg.url}/?invite=${token}\n\nRedeeming it shows that you control this mailbox.` });
+  const sendTimers = new Set();
+  // One attempt. The same idempotency key is sent every time, so a retry of a
+  // send that did arrive cannot produce a second email.
+  async function attemptSend(token) {
+    const inv = db.get("SELECT * FROM invites WHERE token = ? AND state = 'pending'", token);
+    if (!inv) return;
+    const giveUp = (why) => { if (setState(token, 'failed', 'pending')) logEvent('invite.send_failed', { why }); };
+    if (nowSec() - inv.created > cfg.mailRetryWindow || inv.attempts >= 1 + cfg.mailRetryDelays.length) return giveUp('retry window closed');
+    const day = new Date().toISOString().slice(0, 10);
+    // A reservation is written before the send, so the daily cap holds even if sends fail.
+    const reserved = db.tx(() => { if (db.get('SELECT COUNT(*) c FROM mail_sends WHERE day = ?', day).c >= cfg.mailDailyCap) return false; db.run('INSERT INTO mail_sends (day, ts) VALUES (?,?)', day, nowSec()); db.run('UPDATE invites SET attempts = attempts + 1 WHERE token = ?', token); return true; });
+    if (!reserved) return giveUp('daily cap reached');
+    let ok = false;
+    try { await transport.send({ ...inviteMail(inv.email, token), idemKey: inv.idem_key }); ok = true; } catch { /* never log provider text, addresses, links or keys */ }
+    // Only an invitation that is still pending can become redeemable: one that
+    // failed or was superseded meanwhile stays that way, even if this send landed.
+    if (ok) { if (setState(token, 'accepted', 'pending')) logEvent('invite.accepted_by_mail_service', {}); return; }
+    const wait = cfg.mailRetryDelays[inv.attempts]; // attempts counted before this try
+    if (wait === undefined || nowSec() + wait - inv.created > cfg.mailRetryWindow) return giveUp('attempts used up');
+    const t = setTimeout(() => { sendTimers.delete(t); attemptSend(token).catch(() => {}); }, wait * 1000); t.unref(); sendTimers.add(t);
+  }
   async function createInvite(rawEmail, { isOperator = false } = {}) {
     const email = mailbox(rawEmail);
+    const mode = transport.mode;
+    if (mode === 'none') fail(503, 'mail_not_configured');
     const token = randomId(24);
     const link = `${cfg.url}/?invite=${token}`;
-    // Recorded before anything is sent, so a delivered link is never unknown
-    // to the directory. A failed send withdraws it.
-    db.tx(() => { db.run('INSERT INTO invites (token, email, is_operator, exp, created, delivery) VALUES (?,?,?,?,?,?)', token, email, isOperator ? 1 : 0, nowSec() + 48 * 3600, nowSec(), 'pending'); logEvent('invite.created', { email }); });
-    let delivery;
-    try { delivery = await sendMail(cfg, db, { to: email, subject: `Your invitation to ${cfg.name}`, body: `You have been invited to enroll as a principal in ${cfg.name}.\n\nOpen this single-use link within 48 hours:\n${link}\n\nRedeeming it shows that you control this mailbox.`, link }); } catch (e) {
-      // A failed send may still have been delivered (the relay accepted the
-      // message and the acknowledgment was lost). The link is kept valid: it
-      // can only be redeemed by someone who received it. The operator is told.
-      if ('status' in e) { db.run('DELETE FROM invites WHERE token = ?', token); throw e; } // nothing was attempted (mail not configured)
-      db.tx(() => { db.run('UPDATE invites SET delivery = ? WHERE token = ?', 'email to the asserted mailbox (delivery not confirmed)', token); logEvent('invite.delivery_uncertain', { email }); });
-      if (e instanceof Error && !('status' in e)) fail(502, 'mail_delivery_uncertain', { detail: 'The mail server did not confirm delivery. Invite again if the message does not arrive.' });
-      throw e;
-    }
-    db.run('UPDATE invites SET delivery = ? WHERE token = ?', delivery, token);
-    return { email, link: cfg.mode === 'local' ? link : undefined, delivery };
+    const state = mode === 'local' ? 'local' : mode === 'operator-link' ? 'shown' : 'pending';
+    // Recorded before anything is sent. Every earlier unredeemed invitation for
+    // this mailbox stops working in the same step.
+    db.tx(() => {
+      db.run("UPDATE invites SET state = 'superseded', delivery = ? WHERE email = ? AND used_at IS NULL AND is_operator = 0 AND state != 'superseded'", LABEL.superseded, email);
+      db.run('INSERT INTO invites (token, email, is_operator, exp, created, delivery, state, idem_key) VALUES (?,?,?,?,?,?,?,?)', token, email, isOperator ? 1 : 0, nowSec() + 48 * 3600, nowSec(), LABEL[state], state, 'aaf-invite-' + randomId(18));
+      if (mode === 'local') db.run('INSERT INTO outbox (ts, to_addr, subject, body, link) VALUES (?,?,?,?,?)', nowSec(), email, inviteMail(email, token).subject, inviteMail(email, token).body, link);
+      logEvent('invite.created', { email, delivery: mode });
+    });
+    // Sending happens in the background: the operator's confirmation returns at once.
+    if (state === 'pending') attemptSend(token).catch(() => {});
+    return { email, link: state === 'pending' ? undefined : link, delivery: LABEL[state], link_mode: mode };
   }
   // How a principal was actually verified is recorded and later attested as is.
-  const proofingFor = (inv) => (inv.delivery?.startsWith('email')
+  // Assurance comes from the invitation's state at the moment it is redeemed.
+  const proofingFor = (inv) => (inv.state === 'accepted'
     ? { method: 'single-use link emailed to the mailbox and redeemed', assurance: 'low' }
-    : inv.delivery?.startsWith('bootstrap')
-      ? { method: 'operator bootstrap link from the service host; the mailbox was not verified', assurance: 'none' }
-      : { method: 'LOCAL STAND-IN: link shown to the operator, not emailed; the mailbox was not verified', assurance: 'none (simulated)' });
-  const liveInvite = (token) => db.get("SELECT * FROM invites WHERE token = ? AND used_at IS NULL AND delivery != 'pending' AND exp > ?", token, nowSec()) ?? fail(404, 'invite_invalid_or_used');
+    : inv.state === 'shown'
+      ? { method: 'link handed over by the directory operator, not emailed; the mailbox was not verified', assurance: 'none' }
+      : inv.state === 'bootstrap'
+        ? { method: 'operator bootstrap link from the service host; the mailbox was not verified', assurance: 'none' }
+        : { method: 'LOCAL STAND-IN: link shown to the operator, not emailed; the mailbox was not verified', assurance: 'none (simulated)' });
+  const liveInvite = (token) => db.get(`SELECT * FROM invites WHERE token = ? AND used_at IS NULL AND state IN ${REDEEMABLE} AND exp > ?`, token, nowSec()) ?? fail(404, 'invite_invalid_or_used');
 
   app.get('/api/invites/:token', (ctx) => { const inv = liveInvite(ctx.params.token); const how = proofingFor(inv); return { email: inv.email, is_operator: !!inv.is_operator, proof_note: how.assurance === 'low' ? 'That whoever opened this single-use link could read that mailbox. It does not prove a legal identity.' : `Nothing about the mailbox: ${how.method}. The record will say so.` }; });
   app.post('/api/invites/:token/options', async (ctx) => {
@@ -189,7 +250,7 @@ export async function createDirectory(cfg) {
   });
   app.post('/api/invites/:token/verify', async (ctx) => {
     requireSameOrigin(ctx, origin);
-    const inv = liveInvite(ctx.params.token);
+    let inv = liveInvite(ctx.params.token);
     const cer = db.get("SELECT * FROM ceremonies WHERE id = ? AND kind='enroll' AND used = 0 AND exp > ?", ctx.body.ceremony_id, nowSec()) ?? fail(400, 'ceremony_expired');
     if (JSON.parse(cer.args).invite !== inv.token) fail(400, 'ceremony_mismatch');
     let result;
@@ -198,7 +259,9 @@ export async function createDirectory(cfg) {
     const cred = result.registrationInfo.credential;
     const principalId = db.tx(() => {
       // The invite and the ceremony are each usable once.
-      if (db.run('UPDATE invites SET used_at = ? WHERE token = ? AND used_at IS NULL', nowSec(), inv.token).changes !== 1) fail(409, 'invite_invalid_or_used');
+      // Rechecked here: the invitation may have been superseded while the passkey was being made.
+      if (db.run(`UPDATE invites SET used_at = ? WHERE token = ? AND used_at IS NULL AND state IN ${REDEEMABLE}`, nowSec(), inv.token).changes !== 1) fail(409, 'invite_invalid_or_used');
+      inv = db.get('SELECT * FROM invites WHERE token = ?', inv.token);
       db.run('UPDATE ceremonies SET used = 1 WHERE id = ?', cer.id);
       // PV-3: one principal record per verified mailbox. A second invitation to
       // the same address adds a passkey to the existing record.
@@ -214,7 +277,7 @@ export async function createDirectory(cfg) {
         fail(409, 'principal_already_enrolled');
       }
       db.run('INSERT INTO passkeys (cred_id, principal_id, public_key, counter, transports, created) VALUES (?,?,?,?,?,?)', cred.id, p.id, b64u(cred.publicKey), cred.counter, JSON.stringify(cred.transports ?? []), nowSec());
-      logEvent('principal.enrolled', { principal: p.id, identity_type: 'email', delivery: inv.delivery });
+      logEvent('principal.enrolled', { principal: p.id, identity_type: 'email', delivery: inv.state });
       return p.id;
     });
     startSession(ctx, principalId);
@@ -383,7 +446,7 @@ export async function createDirectory(cfg) {
     },
     invite_create: {
       operator: true,
-      prepare(principal, args) { const email = mailbox(args.email); return { args: { email }, display: { title: 'Invite a principal', lines: [['Mailbox', email], ['Effect', 'A single-use link is sent to this mailbox only. Whoever redeems it becomes the verified principal for that address.']] } }; },
+      prepare(principal, args) { const email = mailbox(args.email); return { args: { email }, display: { title: 'Invite a principal', lines: [['Mailbox', email], ['Effect', transport.mode === 'operator-link' ? 'NOT EMAILED: no mail service is configured. A single-use link is shown to you once to hand over. Whoever redeems it becomes the principal for that address, recorded with no mailbox assurance.' : 'A single-use link is sent to this mailbox only. Whoever redeems it becomes the verified principal for that address. Any earlier unused invitation for this mailbox stops working.']] } }; },
       async after(principal, args) { return createInvite(args.email); },
       execute() { return {}; },
     },
@@ -457,7 +520,8 @@ export async function createDirectory(cfg) {
   });
   // Declining never needs a passkey: refusing is always safe.
   app.post('/api/approvals/:id/decline', (ctx) => { requireSameOrigin(ctx, origin); const p = requirePrincipal(ctx); db.run("UPDATE approvals SET status = 'declined', decided_at = ? WHERE id = ? AND principal_id = ? AND status = 'pending'", nowSec(), ctx.params.id, p.id); logEvent('approval.declined', { approval: ctx.params.id }); return { ok: true }; });
-  app.post('/api/pairings/:id/deny', (ctx) => { requireSameOrigin(ctx, origin); const p = requirePrincipal(ctx); if (db.run("UPDATE pairings SET status = 'denied' WHERE id = ? AND status = 'pending'", ctx.params.id).changes) logEvent('pairing.denied', { pairing: ctx.params.id, by: p.id }); return { ok: true }; });
+  // Only someone who was shown this pairing's code can deny it.
+  app.post('/api/pairings/:id/deny', (ctx) => { requireSameOrigin(ctx, origin); const p = requirePrincipal(ctx); if (db.run("UPDATE pairings SET status = 'denied' WHERE id = ? AND status = 'pending' AND user_code = ?", ctx.params.id, String(ctx.body.user_code ?? '')).changes) logEvent('pairing.denied', { pairing: ctx.params.id, by: p.id }); return { ok: true }; });
 
   // ---------- agent authentication (AG-1) ----------
   // Every agent request carries a token signed by the agent's registered key,
@@ -582,15 +646,20 @@ export async function createDirectory(cfg) {
   });
 
   // ---------- approvals: the agent relays a counterparty's signed request ----------
+  // Keys are fetched only from counterparties this directory was configured
+  // to serve. The origin comes from a token nobody has verified yet, so it is
+  // checked against that list before any request leaves.
   async function counterpartyKeys(cpOrigin) {
-    const res = await fetch(`${cpOrigin}/.well-known/aaf-counterparty`, { signal: AbortSignal.timeout(4000) }).catch(() => null);
+    if (cfg.trustedCounterparties && !cfg.trustedCounterparties.includes(cpOrigin)) fail(403, 'counterparty_not_trusted', { counterparty: cpOrigin });
+    const res = await safeFetch(`${cpOrigin}/.well-known/aaf-counterparty`, { allow: cfg.trustedCounterparties, mode: cfg.mode, staging: cfg.staging }).catch((e) => { if (e.status) throw e; return null; });
     if (!res?.ok) fail(502, 'counterparty_keys_unavailable');
-    return (await res.json()).jwks?.keys ?? [];
+    let meta; try { meta = res.json(); } catch { fail(502, 'counterparty_keys_unavailable'); }
+    return meta.jwks?.keys ?? [];
   }
   async function verifyFromCounterparty(token, typ) {
     let iss, kid;
     try { const p = peek(token); iss = new URL(p.payload.iss).origin; kid = p.header.kid; } catch { fail(400, 'invalid_token'); }
-    if (cfg.mode !== 'local' && !iss.startsWith('https://')) fail(400, 'counterparty_must_use_https');
+    if (!schemeAllowed(iss, cfg)) fail(400, 'counterparty_must_use_https');
     const keys = await counterpartyKeys(iss);
     const jwk = keys.find((k) => k.kid === kid) ?? fail(400, 'counterparty_key_unknown');
     try { return { payload: (await verify(token, jwk, typ)).payload, iss }; } catch { fail(400, 'counterparty_signature_invalid'); }
@@ -685,7 +754,8 @@ export async function createDirectory(cfg) {
       base.operator = {
         principals: db.all('SELECT id, identity_type, identity_value, assurance, is_operator, created FROM principals ORDER BY created DESC').map((x) => ({ ...x, agents: db.get('SELECT COUNT(*) c FROM agents WHERE principal_id = ?', x.id).c })),
         all_agents: db.all('SELECT a.id, a.name, a.status, a.fingerprint, p.identity_value AS principal FROM agents a JOIN principals p ON p.id = a.principal_id ORDER BY a.created DESC'),
-        invites: db.all('SELECT email, exp, used_at, created, delivery FROM invites ORDER BY created DESC LIMIT 30'),
+        invites: db.all('SELECT email, exp, used_at, created, delivery, state FROM invites ORDER BY created DESC LIMIT 30'),
+        invite_mode: transport.mode,
         // Links are bearer secrets: they are shown once, by the trusted shell,
         // and never included in the data handed to a design.
         outbox: cfg.mode === 'local' ? db.all('SELECT ts, to_addr, subject FROM outbox ORDER BY id DESC LIMIT 20') : [],
@@ -702,21 +772,24 @@ export async function createDirectory(cfg) {
   // ---------- start-up ----------
   if (!db.get('SELECT 1 FROM principals WHERE is_operator = 1') && !db.get('SELECT 1 FROM invites WHERE is_operator = 1 AND used_at IS NULL AND exp > ?', nowSec())) {
     const token = randomId(24);
-    db.run('INSERT INTO invites (token, email, is_operator, exp, created, delivery) VALUES (?,?,1,?,?,?)', token, cfg.operatorEmail.toLowerCase(), nowSec() + 7 * 86400, nowSec(), 'bootstrap file on the service host');
+    db.run('INSERT INTO invites (token, email, is_operator, exp, created, delivery, state) VALUES (?,?,1,?,?,?,?)', token, cfg.operatorEmail.toLowerCase(), nowSec() + 7 * 86400, nowSec(), LABEL.bootstrap, 'bootstrap');
     fs.writeFileSync(path.join(cfg.dataDir, 'OPERATOR-INVITE.txt'), `${cfg.url}/?invite=${token}\n`, { mode: 0o600 });
   }
-  // An invitation left "pending" by a crash during delivery is released. If the
-  // message was never sent nobody holds the link; if it was, the recipient does.
-  db.run("UPDATE invites SET delivery = ? WHERE delivery = 'pending'", cfg.mode === 'local' ? 'local outbox (stand-in, not real delivery)' : 'email to the asserted mailbox (delivery interrupted by a restart)');
+  // A send interrupted by a restart: resume it if its retry window is still
+  // open (same idempotency key), otherwise it has failed. Never redeemable meanwhile.
+  for (const inv of db.all("SELECT token, created FROM invites WHERE state = 'pending'")) {
+    if (nowSec() - inv.created > cfg.mailRetryWindow || transport.mode === 'none' || transport.mode === 'operator-link') setState(inv.token, 'failed', 'pending');
+    else attemptSend(inv.token).catch(() => {});
+  }
   await publishStatus();
   const timer = setInterval(() => { publishStatus().catch((e) => console.error('[directory] status publish failed', e)); db.run('DELETE FROM used_jti WHERE exp < ?', nowSec()); }, cfg.statusPublishEvery * 1000);
   timer.unref();
 
   let server = null;
   return {
-    app, db, cfg, key, publishStatus, createInvite,
+    app, db, cfg, key, publishStatus, createInvite, attemptSend, mailMode: transport.mode,
     operatorInviteLink: () => { const f = path.join(cfg.dataDir, 'OPERATOR-INVITE.txt'); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim() : null; },
     async listen() { server = await app.listen(cfg.port, cfg.host); return server; },
-    async close() { clearInterval(timer); if (server) await new Promise((r) => { server.closeAllConnections?.(); server.close(r); }); db.close(); },
+    async close() { clearInterval(timer); for (const t of sendTimers) clearTimeout(t); if (server) await new Promise((r) => { server.closeAllConnections?.(); server.close(r); }); db.close(); },
   };
 }

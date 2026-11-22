@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { TYP, newKeyPair, sign, peek } from '../core/tokens.js';
+import { TYP, newKeyPair, sign, peek, verify } from '../core/tokens.js';
 import { b64u, sha256b64u, randomId, nowSec } from '../core/util.js';
 
 export class AgentError extends Error { constructor(code, detail = {}) { super(code); this.code = code; this.detail = detail; } }
@@ -99,14 +99,40 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
     },
 
     // One signed request to a counterparty.
-    async present({ method, url, body, creds, extraClaims = [], idempotencyKey }) {
+    // opSecret: the operation's secret. Only its hash is signed into the proof.
+    // The secret itself is sent (in a header) only when the counterparty says
+    // the operation already completed and asks for it.
+    async present({ method, url, body, creds, extraClaims = [], opSecret, revealSecret = false }) {
       const o = allowed(url); const u = new URL(url);
       const ch = await (await fetch(o + '/api/challenge', { redirect: 'error', signal: AbortSignal.timeout(10000) })).json();
       const raw = body === undefined ? '' : JSON.stringify(body);
       const claims = [...creds.claims, ...extraClaims];
-      const proof = await sign(TYP.proof, { aud: o, htm: method, htu: u.pathname + u.search, body_hash: sha256b64u(raw), creds_hash: sha256b64u([creds.id, ...claims].join('.')), nonce: ch.nonce, op: idempotencyKey ?? undefined, iat: nowSec(), jti: randomId() }, creds.key);
-      const res = await fetch(url, { method, redirect: 'error', headers: { 'aaf-presentation': b64u(JSON.stringify({ id: creds.id, claims, proof })), ...(raw ? { 'content-type': 'application/json' } : {}) }, body: raw || undefined, signal: AbortSignal.timeout(15000) });
+      const proof = await sign(TYP.proof, { aud: o, htm: method, htu: u.pathname + u.search, body_hash: sha256b64u(raw), creds_hash: sha256b64u([creds.id, ...claims].join('.')), nonce: ch.nonce, op: opSecret ? sha256b64u(opSecret) : undefined, iat: nowSec(), jti: randomId() }, creds.key);
+      const res = await fetch(url, { method, redirect: 'error', headers: { 'aaf-presentation': b64u(JSON.stringify({ id: creds.id, claims, proof })), ...(revealSecret && opSecret ? { 'aaf-op-secret': opSecret } : {}), ...(raw ? { 'content-type': 'application/json' } : {}) }, body: raw || undefined, signal: AbortSignal.timeout(15000) });
       return { http_status: res.status, ...(await res.json().catch(() => ({}))) };
+    },
+
+    // Is this receipt the counterparty's signed "done" for exactly this
+    // operation? Checked before the agent forgets the operation, so a forged or
+    // unrelated answer cannot make it drop its retry state.
+    async checkReceipt({ receipt, aud, opSecret, action, body, viaApproval = false }) {
+      try {
+        const res = await fetch(aud + '/.well-known/aaf-counterparty', { redirect: 'error', signal: AbortSignal.timeout(10000) });
+        const keys = (await res.json()).jwks?.keys ?? [];
+        const jwk = keys.find((k) => k.kid === peek(receipt).header.kid);
+        if (!jwk) return 'receipt_key_unknown';
+        const r = (await verify(receipt, jwk, TYP.receipt)).payload;
+        if (r.iss !== aud) return 'receipt_from_another_service';
+        if (r.decision !== 'granted') return 'receipt_is_not_a_grant';
+        if (action && r.action !== action) return 'receipt_for_another_action';
+        // Normally the receipt names this operation. One exception: an order
+        // already written under the same single-use approval, reached again
+        // under a new operation ID. Only the agent the approval was issued to
+        // can present it, and the parameters are still checked below.
+        if (r.op !== sha256b64u(opSecret) && !(viaApproval && r.reason === 'authorized_and_approved')) return 'receipt_for_another_operation';
+        if (body?.sku !== undefined && (r.params?.sku !== body.sku || r.params?.qty !== (body.qty ?? 1))) return 'receipt_for_other_parameters';
+        return null;
+      } catch { return 'receipt_signature_invalid'; }
     },
 
     // A claim signed only by the agent itself. Counterparties can tell.
@@ -153,10 +179,17 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
             throw e;
           }
         }
-        const res = await this.present({ method, url, body, creds, idempotencyKey: requestKey });
+        let res = await this.present({ method, url, body, creds, opSecret: requestKey });
+        // The operation already completed there: prove it is ours and get the stored answer.
+        if (res.error === 'operation_secret_required') res = await this.present({ method, url, body, creds, opSecret: requestKey, revealSecret: true });
         const base = { disclosed: disclosed(creds), receipt: res.receipt };
         // The reservation is released only when a complete, signed answer has arrived.
         if (res.http_status === 200 && !res.receipt) throw new AgentError('incomplete_answer', { hint: 'Repeat the same request; it will not be written twice.' });
+        if (res.http_status === 200) {
+          const action = { '/api/orders': 'shop.order', '/api/quotes': 'shop.quote' }[new URL(url).pathname];
+          const bad = await this.checkReceipt({ receipt: res.receipt, aud, opSecret: requestKey, action, body, viaApproval: !!approvalId });
+          if (bad) throw new AgentError('receipt_not_accepted', { reason: bad, hint: 'The answer did not carry a valid signed receipt for this operation. Nothing was forgotten; repeat the same request.' });
+        }
         if (res.http_status === 200) { remove(opFile); if (approvalId) dropPending(approvalId); return { status: 'done', result: res.quote ?? res.order ?? res, repeated: res.repeated, ...base }; }
         if (useCached) return { status: 'refused', reason: res.error, decision: res.decision, required: res.required, ...base };
         if (res.error === 'claim_required' || res.error === 'presentation_required') {

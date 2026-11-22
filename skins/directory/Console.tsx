@@ -125,6 +125,9 @@ export default function Console({ data, viewer, source, actions }: SkinProps<Dir
               {op.outbox.map((m, i) => <div key={i} className="text-sm"><span className="text-slate-500">to {m.to_addr}:</span> {m.subject} (the link was shown once, when you created it)</div>)}
             </div>
           )}
+          {(op.invites ?? []).length > 0 && (
+            <table className="w-full text-sm mt-3"><tbody>{op.invites.slice(0, 8).map((v, i) => <tr key={i} className="border-t border-slate-100"><td className="py-1">{v.email}</td><td className="text-slate-500">{v.used_at ? 'redeemed' : v.delivery}</td></tr>)}</tbody></table>
+          )}
           <table className="w-full text-sm mt-3"><tbody>{op.principals.map((x) => <tr key={x.id} className="border-t border-slate-100"><td className="py-1">{x.identity_value}</td><td>{x.assurance} assurance</td><td>{x.agents} agents</td><td>{x.is_operator ? 'operator' : ''}</td></tr>)}</tbody></table>
         </Card>
       )}

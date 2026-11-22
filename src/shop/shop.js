@@ -10,6 +10,7 @@ import { TYP, loadOrCreateKey, sign, signSync, verify, peek } from '../core/toke
 import { sha256b64u, randomId, nowSec, digestOf, unb64u, fail, HttpError } from '../core/util.js';
 import { decodeList, getBit } from '../core/statuslist.js';
 import { mountUi } from '../ui/mount.js';
+import { safeFetch, schemeAllowed, isLocalhost } from '../core/net.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS challenges (nonce TEXT PRIMARY KEY, exp INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
@@ -37,6 +38,9 @@ export function shopConfig(env = process.env) {
     statusAcceptAge: 18, // must match the directory's published budget
     clockSkew: 2,
     projectRoot: env.AAF_PROJECT_ROOT ?? path.resolve('.'),
+    staging: env.AAF_STAGING === '1',   // private staging only: allows plain-HTTP localhost origins
+    trustProxy: env.AAF_TRUST_PROXY === '1',
+    rateLimit: Number(env.AAF_RATE_LIMIT ?? ((env.AAF_ENV ?? 'local') === 'local' ? 0 : 300)), // requests a minute per address; 0 = off
   };
 }
 
@@ -47,9 +51,18 @@ class Decision extends Error {
 const deny = (reason, extra) => { throw new Decision('denied', reason, extra); };
 
 export async function createShop(cfg) {
+  // A hosted shop must be told its public HTTPS address and which directories
+  // it trusts. Localhost is accepted only on a staging run.
+  if (cfg.mode !== 'local') {
+    if (!schemeAllowed(cfg.url, cfg)) throw new Error('AAF_SHOP_URL must be an https address on a hosted build');
+    if (!cfg.trusted.length) throw new Error('AAF_TRUSTED_DIRECTORIES must be set on a hosted build');
+    for (const o of cfg.trusted) if (!schemeAllowed(o, cfg) || (isLocalhost(o) && !cfg.staging)) throw new Error('AAF_TRUSTED_DIRECTORIES must be https addresses on a hosted build');
+    if (!cfg.adminToken || cfg.adminToken.length < 24 || cfg.adminToken.startsWith('change-me')) throw new Error('AAF_SHOP_ADMIN_TOKEN must be a long random value on a hosted build');
+  }
   const db = openDb(path.join(cfg.dataDir, 'shop.sqlite'), SCHEMA);
   const key = await loadOrCreateKey(path.join(cfg.dataDir, 'signing-key.json'));
-  const app = createApp({ name: 'shop' });
+  const app = createApp({ name: 'shop', rateLimit: cfg.rateLimit, trustProxy: cfg.trustProxy });
+  const net = { allow: cfg.trusted.map((t) => new URL(t).origin), mode: cfg.mode, staging: cfg.staging, timeout: 3000 };
   const origin = new URL(cfg.url).origin;
   const ADMIN_COOKIE = 'aafshop_admin';
   // The policy file is re-read on every request, so thresholds can change mid-demo.
@@ -60,20 +73,29 @@ export async function createShop(cfg) {
   async function refreshDirectory(t) {
     try {
       if (nowSec() - t.metaAt > 60) {
-        const res = await fetch(`${t.issuer}/.well-known/aaf-directory`, { signal: AbortSignal.timeout(3000) });
-        const meta = await res.json();
+        const res = await safeFetch(`${t.issuer}/.well-known/aaf-directory`, net);
+        const meta = res.json();
         if (meta.issuer !== t.issuer) throw new Error('issuer mismatch');
+        // The status list is fetched only from the issuer's own address,
+        // whatever its metadata says.
+        if (new URL(meta.status_list_uri).origin !== new URL(t.issuer).origin) throw new Error('status list is not on the issuer\'s own address');
         t.keys = meta.jwks.keys; t.name = meta.name; t.practices = meta.practices; t.statusUri = meta.status_list_uri; t.metaAt = nowSec();
       }
-      const res = await fetch(t.statusUri, { signal: AbortSignal.timeout(3000) });
-      const jwt = await res.text();
+      const res = await safeFetch(t.statusUri, { ...net, allow: [new URL(t.issuer).origin] });
+      const jwt = res.text;
       const kid = peek(jwt).header.kid;
       const { payload } = await verify(jwt, t.keys.find((k) => k.kid === kid) ?? t.keys[0], TYP.status);
       if (payload.iss !== t.issuer) throw new Error('status issuer mismatch');
       // Never step back to an older revision or an older snapshot, including
       // across a restart of this shop: the highest revision seen is kept on disk.
       const mark = db.get('SELECT rev, iat FROM watermarks WHERE issuer = ?', t.issuer);
-      if ((t.status && (payload.rev < t.status.rev || (payload.rev === t.status.rev && payload.iat < t.status.iat))) || (mark && (payload.rev < mark.rev || (payload.rev === mark.rev && payload.iat < mark.iat)))) throw new Error('stale status list offered');
+      if ((t.status && payload.rev < t.status.rev) || (mark && payload.rev < mark.rev)) throw new Error('stale status list offered');
+      // Same revision, older timestamp: keep the one already held while it is
+      // still usable. Once it has aged out, the offered list is taken and
+      // judged by its own timestamp, so a directory clock that stepped back
+      // cannot stall this shop for longer than the list would be refused anyway.
+      const heldFresh = t.status && nowSec() - t.status.iat <= cfg.statusAcceptAge + cfg.clockSkew;
+      if (t.status && payload.rev === t.status.rev && payload.iat < t.status.iat && heldFresh) { t.lastError = null; return; }
       t.status = { rev: payload.rev, iat: payload.iat, bits: decodeList(payload.status_list.lst) };
       db.run('INSERT INTO watermarks (issuer, rev, iat) VALUES (?,?,?) ON CONFLICT(issuer) DO UPDATE SET rev = excluded.rev, iat = excluded.iat', t.issuer, payload.rev, payload.iat);
       t.lastError = null;
@@ -117,7 +139,11 @@ export async function createShop(cfg) {
     if (Math.abs(now - proof.iat) > 60) throw new Decision('denied', 'proof_stale', { ev });
     if (db.run('UPDATE challenges SET used = 1 WHERE nonce = ? AND used = 0 AND exp > ?', String(proof.nonce ?? ''), now).changes !== 1) throw new Decision('denied', 'nonce_invalid_or_replayed', { ev });
     ev.holder_verified = true; // from here on, the presenter is known to hold the ID's key
-    ev.op = typeof proof.op === 'string' ? proof.op.slice(0, 80) : null; // the agent's signed operation ID
+    ev.op = typeof proof.op === 'string' ? proof.op.slice(0, 80) : null; // the agent's signed operation ID: the hash of a secret only it holds
+    // A stored answer is handed back only to a caller who also sends that
+    // secret, outside the signed body, so knowing an operation ID is not enough.
+    const secret = ctx.headers['aaf-op-secret'];
+    ev.op_proven = !!ev.op && typeof secret === 'string' && sha256b64u(secret) === ev.op;
 
     // 3. Status, from the cached whole list. If the list is older than the
     // agreed budget the honest answer is "I cannot tell", and nothing is written.
@@ -178,8 +204,9 @@ export async function createShop(cfg) {
   // Signed synchronously so a write and its receipt commit in one transaction.
   function record(action, decision, reason, ev, extra = {}) {
     const actionDigest = extra.action_digest ?? null;
-    const receipt = signSync(TYP.receipt, { iss: cfg.url, iat: nowSec(), jti: randomId(), action, params: extra.params ?? null, action_digest: actionDigest, decision, reason, holder_verified: ev?.holder_verified === true, id: ev?.id ?? null, id_jti: ev?.id_jti ?? null, id_issuer: ev?.issuer ?? null, id_mode: ev?.id_mode ?? null, claims: (ev?.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status: ev?.status ?? null, result: extra.result ?? null }, key.privateJwk);
-    return { receipt, detail: { ev: ev ?? null, params: extra.params ?? null, result: extra.result ?? null, required: extra.required ?? null } };
+    const receipt = signSync(TYP.receipt, { iss: cfg.url, iat: nowSec(), jti: randomId(), action, op: ev?.op ?? null, params: extra.params ?? null, action_digest: actionDigest, decision, reason, holder_verified: ev?.holder_verified === true, id: ev?.id ?? null, id_jti: ev?.id_jti ?? null, id_issuer: ev?.issuer ?? null, id_mode: ev?.id_mode ?? null, claims: (ev?.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status: ev?.status ?? null, result: extra.result ?? null }, key.privateJwk);
+    const { op_proven: _p, ...evOut } = ev ?? {};
+    return { receipt, detail: { ev: ev ? evOut : null, params: extra.params ?? null, result: extra.result ?? null, required: extra.required ?? null } };
   }
   const saveDecision = (action, decision, reason, rec) => db.run('INSERT INTO decisions (ts, action, decision, reason, detail, receipt) VALUES (?,?,?,?,?,?)', nowSec(), action, decision, reason, JSON.stringify(rec.detail), rec.receipt);
   const STATUS_FOR = { denied: 403, step_up: 403, deferred: 503 };
@@ -197,6 +224,13 @@ export async function createShop(cfg) {
         if (!(e instanceof Decision)) throw e;
         const ev = e.extra.ev ?? verified?.ev ?? null;
         e.extra = { ...base, ...e.extra };
+        // Until the presenter has proved it holds the ID's key, nothing is
+        // signed and nothing is stored: an unauthenticated caller cannot fill
+        // the decision log, and no incident case can be built on such a refusal.
+        if (ev?.holder_verified !== true) {
+          const { ev: _e, ticket: _t, ...pub } = e.extra;
+          throw new HttpError(e.reason === 'presentation_required' ? 401 : STATUS_FOR[e.decision], e.reason, { decision: e.decision, ...pub, recorded: false });
+        }
         const rec = db.tx(() => { const r = record(action, e.decision, e.reason, ev, e.extra); saveDecision(action, e.decision, e.reason, r); return r; });
         const { ev: _omit, ...publicExtra } = e.extra;
         throw new HttpError(e.reason === 'presentation_required' ? 401 : STATUS_FOR[e.decision], e.reason, { decision: e.decision, ...publicExtra, receipt: rec.receipt });
@@ -228,7 +262,7 @@ export async function createShop(cfg) {
     return db.tx(() => {
       // A repeated operation gets the answer that was stored the first time.
       const prior = idem && db.get('SELECT * FROM quotes WHERE idem = ?', idem);
-      if (prior) { if (prior.sku !== quote.sku || prior.qty !== quote.qty) throw new Decision('denied', 'operation_id_reused_for_a_different_order'); return { ...JSON.parse(prior.response), repeated: true }; }
+      if (prior) { if (prior.sku !== quote.sku || prior.qty !== quote.qty) throw new Decision('denied', 'operation_id_reused_for_a_different_order'); if (!v.ev.op_proven) throw new HttpError(409, 'operation_secret_required', { decision: 'repeat', hint: 'This operation already completed. Send its secret to get the stored answer.' }); return { ...JSON.parse(prior.response), repeated: true }; }
       recheckAtCommit(v, []);
       const r = record('shop.quote', 'granted', 'valid_id', v.ev, { ...base, result: { quote_id: quote.quote_id } });
       const response = { decision: 'granted', quote, receipt: r.receipt };
@@ -250,6 +284,7 @@ export async function createShop(cfg) {
     if (v.ev.op) {
       const done = db.get('SELECT * FROM orders WHERE idem = ?', 'op:' + v.ev.op);
       if (done && (done.sku !== params.sku || done.qty !== params.qty)) throw new Decision('denied', 'operation_id_reused_for_a_different_order');
+      if (done && !v.ev.op_proven) throw new HttpError(409, 'operation_secret_required', { decision: 'repeat', hint: 'This operation already completed. Send its secret to get the stored answer.' });
       if (done) return { decision: 'granted', order: { order_id: done.id, sku: done.sku, item: params.item, qty: done.qty, total: done.total, currency: done.currency }, repeated: true, receipt: done.receipt };
     }
     const accepted = (type) => v.claims.find((c) => c.type === type && c.accepted);
@@ -292,6 +327,7 @@ export async function createShop(cfg) {
     const out = db.tx(() => {
       const prior = (idem && db.get('SELECT * FROM orders WHERE idem = ?', idem)) || (ticketDigest && db.get('SELECT o.* FROM orders o JOIN tickets t ON t.order_id = o.id WHERE t.digest = ?', ticketDigest));
       if (prior && (prior.sku !== params.sku || prior.qty !== params.qty)) throw new Decision('denied', 'operation_id_reused_for_a_different_order');
+      if (prior && idem?.startsWith('op:') && !v.ev.op_proven) throw new HttpError(409, 'operation_secret_required', { decision: 'repeat', hint: 'This operation already completed. Send its secret to get the stored answer.' });
       if (prior) return { order_id: prior.id, receipt: prior.receipt, repeated: true };
       recheckAtCommit(v, [auth, accepted('principal_verification'), ticketDigest ? accepted('approval') : null]);
       const rec = record('shop.order', 'granted', ticketDigest ? 'authorized_and_approved' : 'authorized', v.ev, { ...base, result: { order_id: orderId } });
@@ -315,9 +351,9 @@ export async function createShop(cfg) {
     if (!payload.id || !payload.holder_verified || !trust.has(payload.id_issuer)) fail(409, 'no_holder_verified_id_in_this_decision');
     // The affected party reports to the directory with its own signed receipt.
     const report = await sign(TYP.incident, { iss: cfg.url, aud: payload.id_issuer, iat: nowSec(), jti: randomId(), receipt: d.receipt, note: String(ctx.body.note ?? '').slice(0, 500) }, key.privateJwk);
-    const res = await fetch(`${payload.id_issuer}/api/incidents`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ report }) }).catch(() => null);
-    if (!res?.ok) fail(502, 'directory_did_not_accept_report', { detail: res ? await res.json().catch(() => ({})) : 'unreachable' });
-    const { case_ref } = await res.json();
+    const res = await safeFetch(`${payload.id_issuer}/api/incidents`, { ...net, timeout: 8000, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ report }) }).catch(() => null);
+    if (!res?.ok) fail(502, 'directory_did_not_accept_report', { detail: res ? (() => { try { return res.json(); } catch { return {}; } })() : 'unreachable' });
+    const { case_ref } = res.json();
     db.run('UPDATE decisions SET case_ref = ? WHERE seq = ?', case_ref, d.seq);
     return { case_ref };
   });
