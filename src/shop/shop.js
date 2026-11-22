@@ -40,7 +40,8 @@ export function shopConfig(env = process.env) {
     projectRoot: env.AAF_PROJECT_ROOT ?? path.resolve('.'),
     staging: env.AAF_STAGING === '1',   // private staging only: allows plain-HTTP localhost origins
     trustProxy: env.AAF_TRUST_PROXY === '1',
-    rateLimit: Number(env.AAF_RATE_LIMIT ?? ((env.AAF_ENV ?? 'local') === 'local' ? 0 : 300)), // requests a minute per address; 0 = off
+    rateLimit: Number(env.AAF_RATE_LIMIT ?? ((env.AAF_ENV ?? 'local') === 'local' ? 0 : 600)), // all requests a minute per address; 0 = off
+    postLimit: Number(env.AAF_POST_LIMIT ?? ((env.AAF_ENV ?? 'local') === 'local' ? 0 : 120)), // POSTs a minute per address; 0 = off
   };
 }
 
@@ -61,7 +62,7 @@ export async function createShop(cfg) {
   }
   const db = openDb(path.join(cfg.dataDir, 'shop.sqlite'), SCHEMA);
   const key = await loadOrCreateKey(path.join(cfg.dataDir, 'signing-key.json'));
-  const app = createApp({ name: 'shop', rateLimit: cfg.rateLimit, trustProxy: cfg.trustProxy });
+  const app = createApp({ name: 'shop', rateLimit: cfg.rateLimit, postLimit: cfg.postLimit, trustProxy: cfg.trustProxy });
   const net = { allow: cfg.trusted.map((t) => new URL(t).origin), mode: cfg.mode, staging: cfg.staging, timeout: 3000 };
   const origin = new URL(cfg.url).origin;
   const ADMIN_COOKIE = 'aafshop_admin';

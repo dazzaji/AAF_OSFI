@@ -20,7 +20,7 @@ This is the small protocol the pilot uses. It is one way to meet the paper's req
 | `aaf-proof+jwt` | Agent, with the presentation key | Holder proof for one HTTP request | `aud`, `htm`, `htu`, `body_hash`, `creds_hash`, `nonce`, `op`, `iat` |
 | `aaf-ticket+jwt` | Shop | "Approve exactly this" | `aud` (the directory), `for_id`, `action`, `params`, `action_digest`, `exp` |
 | `aaf-incident+jwt` | Shop | Reports one receipt to the directory | `aud` (the directory), `receipt`, `note`, `iat` |
-| `aaf-receipt+jwt` | Shop | Record of one decision | `action`, `params`, `action_digest`, `decision`, `reason`, `holder_verified`, `id`, `id_jti`, `id_issuer`, `claims`, `status` |
+| `aaf-receipt+jwt` | Shop | Record of one decision | `action`, `op`, `params`, `action_digest`, `decision`, `reason`, `holder_verified`, `id`, `id_jti`, `id_issuer`, `claims`, `status` |
 | `aaf-statuslist+jwt` | Directory | Revocation snapshot | `iat`, `exp`, `rev`, `status_list.lst` (one bit per ID or claim, deflated) |
 | `aaf-agent-req+jwt` | Agent, with its long-term key | Authenticates a request to the directory | `iss` (agent record), `aud`, `htm`, `htu`, `body_hash`, `iat`, `jti` |
 | `aaf-key-pop+jwt` | Agent, with a new presentation key | Proves it holds that key | `aud`, `agent`, `iat` |
@@ -71,7 +71,7 @@ AAF-Presentation: base64url({ "id": "<aaf-id+jwt>", "claims": [], "proof": "<aaf
 | 403 | anything else | Denied: `id_revoked`, `holder_binding_failed`, `untrusted_issuer`, and so on. | Stop. |
 | 503 | `status_too_old` | The shop's copy of the status list is too old to rely on. Nothing was done. | Try again shortly. |
 
-Every answer except a malformed request includes a signed `receipt`.
+Every answer given after the holder proof verified includes a signed `receipt`. Before that point (no presentation, a malformed one, an untrusted issuer, a bad ID signature, a failed holder proof or a reused nonce) the shop signs nothing and stores nothing: the answer carries `"recorded": false` and no receipt, so an unauthenticated caller cannot fill the decision log and no incident case can be built on such a refusal.
 
 **5. Approval.** The agent relays the ticket. The directory checks the shop's signature, that the ticket was requested with one of this agent's own IDs, and that the amount is within the standing authorization.
 
@@ -88,4 +88,4 @@ The principal opens `review_url`. The directory shows the action and parameters 
 
 ## Request retries
 
-Each intended write has an operation ID, chosen by the agent and signed into the holder proof (`op`). The shop writes an operation once and returns the original receipt if it sees the same one again. An approved order is also tied to its ticket, which can be used once.
+Each intended write has an operation secret, chosen by the agent and kept by it. Only the secret's SHA-256 hash is signed into the holder proof, as `op`; that hash is the operation ID, and the receipt carries it too. The shop writes an operation once. If it sees the same `op` again it answers `409 operation_secret_required`, and returns the stored answer only when the request is repeated with the secret in the `aaf-op-secret` header (outside the signed body). Someone who only learned an operation ID therefore cannot fetch its receipt. Before the agent forgets an operation it checks that the receipt is signed by the shop's published key, is a grant, and names this operation, action, item and quantity. An approved order is also tied to its single-use ticket: reached again through that same approval under a new operation ID, the shop returns the original order's receipt.

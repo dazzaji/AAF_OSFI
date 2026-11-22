@@ -1,0 +1,14 @@
+# Keep the build context to what the image needs.
+.git
+.gitignore
+node_modules
+work
+data
+.env
+.env.*
+*.log
+.DS_Store
+docs
+skill
+deploy
+scripts

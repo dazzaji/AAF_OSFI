@@ -6,18 +6,21 @@ import { HttpError } from './util.js';
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
-export function createApp({ name, rateLimit = 0, trustProxy = false }) {
+export function createApp({ name, rateLimit = 0, postLimit = 0, trustProxy = false }) {
   const routes = [];
-  // A plain per-address limit (requests a minute). Behind the tunnel the
+  // Plain per-address limits (requests a minute): one for everything, and a
+  // tighter one for POSTs, which are the requests that can cost work or write.
+  // Pages poll with GETs, so those get the roomier limit. Behind the tunnel the
   // client address is the one Cloudflare reports; a client-supplied
   // X-Forwarded-For is never used.
-  const hits = new Map();
-  if (rateLimit) setInterval(() => hits.clear(), 60_000).unref();
+  const hits = new Map(); const posts = new Map();
+  if (rateLimit || postLimit) setInterval(() => { hits.clear(); posts.clear(); }, 60_000).unref();
+  const bump = (map, who) => { const n = (map.get(who) ?? 0) + 1; map.set(who, n); return n; };
   const limited = (req) => {
-    if (!rateLimit) return false;
+    if (!rateLimit && !postLimit) return false;
     const who = (trustProxy && req.headers['cf-connecting-ip']) || req.socket.remoteAddress || 'unknown';
-    const n = (hits.get(who) ?? 0) + 1; hits.set(who, n);
-    return n > rateLimit;
+    if (rateLimit && bump(hits, who) > rateLimit) return true;
+    return !!postLimit && req.method === 'POST' && bump(posts, who) > postLimit;
   };
   const add = (method, pattern, handler) => {
     const keys = [];
