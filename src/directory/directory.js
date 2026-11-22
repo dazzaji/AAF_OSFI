@@ -107,7 +107,7 @@ export async function createDirectory(cfg) {
     id_lifetime_seconds: cfg.idTtl,
     revocation: { kinds: ['agent registration (by principal or by directory operator)', 'single authorization (by principal)'], latency_seconds: cfg.statusPublishMax + cfg.statusAcceptAge + cfg.statusClockSkew, budget: { publish_max: cfg.statusPublishMax, verifier_accept_age: cfg.statusAcceptAge, clock_skew: cfg.statusClockSkew }, method: 'Signed whole-list snapshot, republished at least every ' + cfg.statusPublishEvery + ' seconds. Verifiers fetch the whole list; there is no per-ID lookup.' },
     signing_key: 'One online Ed25519 key held on the service host. No hardware protection, no offline root, manual rotation.',
-    what_the_directory_learns: 'The counterparty each ID is issued for and when, the claims requested, and each action a principal approves. IDs are unlinkable to counterparties, not to this directory. Entries revoked together in the status list can reveal that they belong together.',
+    what_the_directory_learns: 'The counterparty each ID is issued for and when, the claims requested, and each action a principal approves. IDs are unlinkable to counterparties, not to this directory. Entries revoked together in the status list can reveal that they belong together. Within one transaction, the presentations that follow a request for more (and any retry) carry the same operation ID, so a counterparty can tell they are one transaction.',
     records_kept: 'Principal record, agent records, every issued ID with its agent and principal, grants, approvals, revocations, cases and disclosures.',
     retention: 'Records are kept for the life of the pilot and survive revocation. There is no automatic deletion: the operator deletes the pilot data by hand when the pilot closes.',
     release_process: 'An affected counterparty submits a signed decision receipt. An authenticated operator releases the agent label and verified identity for the IDs named in that receipt only, with a recorded basis, and the principal is notified. In this pilot the lawful request is a labelled simulation, not a real legal process.',
@@ -270,12 +270,15 @@ export async function createDirectory(cfg) {
         if (agent.status !== 'active') fail(409, 'agent_revoked');
         const g = normGrant(args);
         const old = db.get("SELECT * FROM grants WHERE agent_id = ? AND action = ? AND status = 'active'", agent.id, g.action);
-        return { args: { agent_id: agent.id, ...g }, display: { title: old ? 'Change this authorization' : 'Grant this authorization', lines: [['Agent', agent.name], ['May do', g.action], ['Limit', `${fmtMoney(g.max_amount, g.currency)} per action`], ['Lasts', `${g.days} days`], ['Replaces', old ? `${fmtMoney(old.max_amount, old.currency)} per action (version ${old.version})` : 'nothing']] } };
+        return { args: { agent_id: agent.id, ...g, replaces: old ? `${old.id}:${old.version}` : null }, display: { title: old ? 'Change this authorization' : 'Grant this authorization', lines: [['Agent', agent.name], ['May do', g.action], ['Limit', `${fmtMoney(g.max_amount, g.currency)} per action`], ['Lasts', `${g.days} days`], ['Replaces', old ? `${fmtMoney(old.max_amount, old.currency)} per action (version ${old.version})` : 'nothing']] } };
       },
       execute(principal, args) {
         const agent = agentOf(principal, args.agent_id);
         if (agent.status !== 'active') fail(409, 'agent_revoked');
         const old = db.get("SELECT * FROM grants WHERE agent_id = ? AND action = ? AND status = 'active'", agent.id, args.action);
+        // The screen said what this replaces. If that changed meanwhile (for
+        // example the authorization was withdrawn in another tab), stop.
+        if ((old ? `${old.id}:${old.version}` : null) !== (args.replaces ?? null)) fail(409, 'grant_changed');
         if (old) revokeGrantRow(old, 'replaced');
         const id = insertGrant(agent.id, args, (old?.version ?? 0) + 1);
         logEvent('grant.created', { grant: id, agent: agent.id, action: args.action, max_amount: args.max_amount });
@@ -319,7 +322,18 @@ export async function createDirectory(cfg) {
         const policy = normPolicy(args.policy);
         return { args: { agent_id: agent.id, policy }, display: { title: 'Change what this agent may disclose', lines: [['Agent', agent.name], ['Share how you were verified', policy.share_verification ? 'yes, when a service asks' : 'no'], ['Share your verified email', policy.share_identity_with.length ? 'only with ' + policy.share_identity_with.join(', ') : 'never']] } };
       },
-      execute(principal, args) { const agent = agentOf(principal, args.agent_id); db.run('UPDATE agents SET policy = ? WHERE id = ?', JSON.stringify(args.policy), agent.id); logEvent('agent.policy', { agent: agent.id }); return { ok: true }; },
+      execute(principal, args) {
+        const agent = agentOf(principal, args.agent_id);
+        db.run('UPDATE agents SET policy = ? WHERE id = ?', JSON.stringify(args.policy), agent.id);
+        // RV-1: withdrawing a disclosure also revokes the claims of that kind
+        // that are still outstanding, each through its own status entry.
+        let n = 0;
+        if (!args.policy.share_verification) n += db.run("UPDATE issued SET revoked = 1 WHERE agent_id = ? AND claim_type = 'principal_verification' AND exp > ? AND revoked = 0", agent.id, nowSec()).changes;
+        for (const row of db.all("SELECT jti, aud FROM issued WHERE agent_id = ? AND claim_type = 'principal_identity' AND exp > ? AND revoked = 0", agent.id, nowSec())) if (!args.policy.share_identity_with.includes(row.aud)) { db.run('UPDATE issued SET revoked = 1 WHERE jti = ?', row.jti); n++; }
+        if (n) bumpStatusRev();
+        logEvent('agent.policy', { agent: agent.id, claims_revoked: n });
+        return { ok: true };
+      },
     },
     approval_approve: {
       prepare(principal, args) {
@@ -533,7 +547,9 @@ export async function createDirectory(cfg) {
     const cnf = { jwk: { kty: pjwk.kty, crv: pjwk.crv, x: pjwk.x } };
     const idJwt = await sign(TYP.id, { iss: cfg.url, sub, aud, iat, exp, jti: idJti, cnf, id_mode: mode, status: { idx: rows.idIdx, uri: statusUri } }, key.privateJwk);
     const claimJwts = [];
-    for (const c of rows.out) claimJwts.push(await sign(TYP.claim, { iss: cfg.url, sub, aud, iat, exp: c.exp ?? exp, jti: c.jti, attested_by: 'directory', claim: { type: c.type, value: c.value }, status: { idx: c.idx, uri: statusUri } }, key.privateJwk));
+    // Each claim names the one issuance it belongs to, so a claim cannot be
+    // carried over to a later ID that happens to share a stable identifier.
+    for (const c of rows.out) claimJwts.push(await sign(TYP.claim, { iss: cfg.url, sub, id_jti: idJti, aud, iat, exp: c.exp ?? exp, jti: c.jti, attested_by: 'directory', claim: { type: c.type, value: c.value }, status: { idx: c.idx, uri: statusUri } }, key.privateJwk));
     return { id: idJwt, claims: claimJwts, withheld, sub, expires_at: exp };
   });
 
@@ -589,7 +605,13 @@ export async function createDirectory(cfg) {
 
   // ---------- incident reports and attribution (ES-1) ----------
   app.post('/api/incidents', async (ctx) => {
-    const { payload: r, iss } = await verifyFromCounterparty(String(ctx.body.receipt ?? ''), TYP.receipt);
+    // The report itself is signed by the counterparty and covers the receipt
+    // and the note, so nobody who merely holds a receipt can file one.
+    const { payload: sub_, iss: reporter } = await verifyFromCounterparty(String(ctx.body.report ?? ''), TYP.incident);
+    if (sub_.aud !== cfg.url || Math.abs(nowSec() - sub_.iat) > 300 || typeof sub_.receipt !== 'string') fail(400, 'invalid_report');
+    ctx.body = { receipt: sub_.receipt, note: sub_.note };
+    const { payload: r, iss } = await verifyFromCounterparty(sub_.receipt, TYP.receipt);
+    if (iss !== reporter) fail(400, 'report_and_receipt_issuers_differ');
     if (r.id_issuer !== cfg.url) fail(400, 'receipt_names_another_directory');
     // Only a decision where the presenter proved it held the ID's key can open
     // a case; a copied ID that failed that check must not expose its owner.
@@ -598,7 +620,7 @@ export async function createDirectory(cfg) {
     // Bound to the one issuance the receipt names (a stable per-shop ID is
     // issued many times; each issuance has its own serial).
     const row = db.get("SELECT * FROM issued WHERE jti = ? AND sub = ? AND kind = 'id' AND aud = ?", String(r.id_jti ?? ''), String(r.id ?? ''), iss) ?? fail(404, 'id_not_issued_to_this_counterparty');
-    const receiptDigest = sha256b64u(ctx.body.receipt);
+    const receiptDigest = sha256b64u(`${iss}|${r.jti}`); // by verified issuer and receipt serial, not raw token bytes
     return db.tx(() => {
       const existing = db.get('SELECT id FROM cases WHERE receipt_digest = ?', receiptDigest);
       if (existing) return { case_ref: existing.id };
@@ -636,7 +658,9 @@ export async function createDirectory(cfg) {
         principals: db.all('SELECT id, identity_type, identity_value, assurance, is_operator, created FROM principals ORDER BY created DESC').map((x) => ({ ...x, agents: db.get('SELECT COUNT(*) c FROM agents WHERE principal_id = ?', x.id).c })),
         all_agents: db.all('SELECT a.id, a.name, a.status, a.fingerprint, p.identity_value AS principal FROM agents a JOIN principals p ON p.id = a.principal_id ORDER BY a.created DESC'),
         invites: db.all('SELECT email, exp, used_at, created, delivery FROM invites ORDER BY created DESC LIMIT 30'),
-        outbox: cfg.mode === 'local' ? db.all('SELECT ts, to_addr, subject, link FROM outbox ORDER BY id DESC LIMIT 20') : [],
+        // Links are bearer secrets: they are shown once, by the trusted shell,
+        // and never included in the data handed to a design.
+        outbox: cfg.mode === 'local' ? db.all('SELECT ts, to_addr, subject FROM outbox ORDER BY id DESC LIMIT 20') : [],
         cases: db.all('SELECT id, counterparty, sub, note, status, created, released_at, basis, disclosure FROM cases ORDER BY created DESC LIMIT 30').map((c) => ({ ...c, disclosure: c.disclosure ? JSON.parse(c.disclosure) : null })),
         events: db.all('SELECT seq, ts, type, data, hash FROM events ORDER BY seq DESC LIMIT 60').map((e) => ({ ...e, data: JSON.parse(e.data) })),
       };
@@ -653,6 +677,9 @@ export async function createDirectory(cfg) {
     db.run('INSERT INTO invites (token, email, is_operator, exp, created, delivery) VALUES (?,?,1,?,?,?)', token, cfg.operatorEmail.toLowerCase(), nowSec() + 7 * 86400, nowSec(), 'bootstrap file on the service host');
     fs.writeFileSync(path.join(cfg.dataDir, 'OPERATOR-INVITE.txt'), `${cfg.url}/?invite=${token}\n`, { mode: 0o600 });
   }
+  // An invitation left "pending" by a crash during delivery is released. If the
+  // message was never sent nobody holds the link; if it was, the recipient does.
+  db.run("UPDATE invites SET delivery = ? WHERE delivery = 'pending'", cfg.mode === 'local' ? 'local outbox (stand-in, not real delivery)' : 'email to the asserted mailbox (delivery interrupted by a restart)');
   await publishStatus();
   const timer = setInterval(() => { publishStatus().catch((e) => console.error('[directory] status publish failed', e)); db.run('DELETE FROM used_jti WHERE exp < ?', nowSec()); }, cfg.statusPublishEvery * 1000);
   timer.unref();

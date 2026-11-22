@@ -13,6 +13,7 @@ export const TYP = {
   keyPop: 'aaf-key-pop+jwt',      // proof of possession of a freshly made presentation key
   ticket: 'aaf-ticket+jwt',       // counterparty -> principal (via agent): "approve exactly this"
   receipt: 'aaf-receipt+jwt',     // counterparty: signed record of one decision
+  incident: 'aaf-incident+jwt',   // counterparty -> directory: "I am reporting this receipt"
   status: 'aaf-statuslist+jwt',   // directory: signed status list snapshot
 };
 

@@ -123,9 +123,14 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
       // is made again within 15 minutes, the same ID is sent and the
       // counterparty writes once. The ID is signed into every proof.
       const opFile = `op-${sha256b64u(JSON.stringify([method, url, body])).slice(0, 24)}.json`;
-      const open_ = fresh ? null : read(opFile);
-      requestKey ??= open_ && open_.at > nowSec() - 900 ? open_.key : randomId();
-      write(opFile, { key: requestKey, at: nowSec() });
+      if (!requestKey) {
+        const stale = read(opFile); if (fresh || (stale && stale.at <= nowSec() - 900)) remove(opFile);
+        // Reserved atomically: if two processes start the same request at
+        // once, exactly one creates the file and both use its ID.
+        fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+        try { fs.writeFileSync(file(opFile), JSON.stringify({ key: randomId(), at: nowSec() }), { mode: 0o600, flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+        requestKey = read(opFile).key;
+      }
       const dropPending = (id) => remove(`pending-${id}.json`);
       const disclosed = (creds) => ({ id: `${creds.sub} (${mode === 'pairwise' ? 'stable for this service' : 'single-use'})`, claims: creds.claims.map((c) => peek(c).payload.claim.type), withheld_by_policy: creds.withheld ?? [] });
       for (let round = 0; round < 5; round++) {
@@ -148,6 +153,8 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
         }
         const res = await this.present({ method, url, body, creds, idempotencyKey: requestKey });
         const base = { disclosed: disclosed(creds), receipt: res.receipt };
+        // The reservation is released only when a complete, signed answer has arrived.
+        if (res.http_status === 200 && !res.receipt) throw new AgentError('incomplete_answer', { hint: 'Repeat the same request; it will not be written twice.' });
         if (res.http_status === 200) { remove(opFile); if (approvalId) dropPending(approvalId); return { status: 'done', result: res.quote ?? res.order ?? res, repeated: res.repeated, ...base }; }
         if (useCached) return { status: 'refused', reason: res.error, decision: res.decision, required: res.required, ...base };
         if (res.error === 'claim_required' || res.error === 'presentation_required') {

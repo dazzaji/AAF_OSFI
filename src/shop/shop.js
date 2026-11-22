@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS challenges (nonce TEXT PRIMARY KEY, exp INTEGER NOT N
 CREATE TABLE IF NOT EXISTS tickets (digest TEXT PRIMARY KEY, jwt TEXT NOT NULL, action_digest TEXT NOT NULL, exp INTEGER NOT NULL, order_id TEXT);
 CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, sku TEXT NOT NULL, qty INTEGER NOT NULL, total REAL NOT NULL, currency TEXT NOT NULL, id_sub TEXT NOT NULL, approved INTEGER NOT NULL, idem TEXT UNIQUE, receipt TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS quotes (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, sku TEXT NOT NULL, qty INTEGER NOT NULL, total REAL NOT NULL, id_sub TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS watermarks (issuer TEXT PRIMARY KEY, rev INTEGER NOT NULL, iat INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS decisions (seq INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, decision TEXT NOT NULL, reason TEXT NOT NULL, detail TEXT NOT NULL, receipt TEXT, case_ref TEXT);
 `;
 
@@ -69,9 +70,12 @@ export async function createShop(cfg) {
       const kid = peek(jwt).header.kid;
       const { payload } = await verify(jwt, t.keys.find((k) => k.kid === kid) ?? t.keys[0], TYP.status);
       if (payload.iss !== t.issuer) throw new Error('status issuer mismatch');
-      // Never step back to an older revision or an older snapshot.
-      if (t.status && (payload.rev < t.status.rev || payload.iat < t.status.iat)) throw new Error('stale status list offered');
+      // Never step back to an older revision or an older snapshot, including
+      // across a restart of this shop: the highest revision seen is kept on disk.
+      const mark = db.get('SELECT rev, iat FROM watermarks WHERE issuer = ?', t.issuer);
+      if ((t.status && (payload.rev < t.status.rev || payload.iat < t.status.iat)) || (mark && payload.rev < mark.rev)) throw new Error('stale status list offered');
       t.status = { rev: payload.rev, iat: payload.iat, bits: decodeList(payload.status_list.lst) };
+      db.run('INSERT INTO watermarks (issuer, rev, iat) VALUES (?,?,?) ON CONFLICT(issuer) DO UPDATE SET rev = excluded.rev, iat = excluded.iat', t.issuer, payload.rev, payload.iat);
       t.lastError = null;
     } catch (e) { t.lastError = e.message; }
   }
@@ -139,7 +143,7 @@ export async function createShop(cfg) {
         } else {
           const c = (await verify(jwt, dirKey, TYP.claim)).payload;
           entry.attested_by = 'directory'; entry.value = c.claim.value;
-          if (c.sub !== id.sub) entry.reason = 'claim_for_another_id';
+          if (c.sub !== id.sub || c.id_jti !== id.jti) entry.reason = 'claim_for_another_id';
           else if (c.aud !== cfg.url) entry.reason = 'wrong_audience';
           else if (c.exp <= now - cfg.clockSkew) entry.reason = 'claim_expired';
           else if (getBit(t.status.bits, c.status.idx)) entry.reason = 'claim_revoked';
@@ -157,6 +161,7 @@ export async function createShop(cfg) {
   // still stops the write.
   function recheckAtCommit(v, usedClaims) {
     const t = trust.get(v.id.iss); const now = nowSec();
+    if (t?.status) v.ev.status = { rev: t.status.rev, age: now - t.status.iat }; // the snapshot that governs this decision, whatever it turns out to be
     if (!t?.status || now - t.status.iat > cfg.statusAcceptAge + cfg.clockSkew) throw new Decision('deferred', 'status_too_old');
     if (v.id.exp <= now - cfg.clockSkew) throw new Decision('denied', 'id_expired');
     if (getBit(t.status.bits, v.id.status.idx)) throw new Decision('denied', 'id_revoked');
@@ -165,7 +170,6 @@ export async function createShop(cfg) {
       if (c.exp <= now - cfg.clockSkew) throw new Decision('step_up', 'claim_required', { required: [{ type: c.type, not_accepted_because: ['claim_expired'] }] });
       if (getBit(t.status.bits, c.idx)) throw new Decision('step_up', 'claim_required', { required: [{ type: c.type, not_accepted_because: ['claim_revoked'] }] });
     }
-    v.ev.status = { rev: t.status.rev, age: now - t.status.iat }; // the snapshot that governed the write
   }
 
   // ---------- recording and answering ----------
@@ -264,10 +268,13 @@ export async function createShop(cfg) {
     // receipt commit together; an identical retry gets the original receipt.
     // The operation ID is part of the signed proof, so nobody in between can
     // change it. The same operation is written once, however it is retried.
-    const idem = v.ev.op ? 'op:' + v.ev.op + ':' + actionDigest : ticketDigest ? 'ticket:' + ticketDigest : null;
+    // Keyed by the operation alone, so a price change between attempts cannot
+    // turn a retry into a second order. Reusing an ID for a different order is refused.
+    const idem = v.ev.op ? 'op:' + v.ev.op : ticketDigest ? 'ticket:' + ticketDigest : null;
     const orderId = 'ord_' + randomId(6);
     const out = db.tx(() => {
       const prior = (idem && db.get('SELECT * FROM orders WHERE idem = ?', idem)) || (ticketDigest && db.get('SELECT o.* FROM orders o JOIN tickets t ON t.order_id = o.id WHERE t.digest = ?', ticketDigest));
+      if (prior && (prior.sku !== params.sku || prior.qty !== params.qty)) throw new Decision('denied', 'operation_id_reused_for_a_different_order');
       if (prior) return { order_id: prior.id, receipt: prior.receipt, repeated: true };
       recheckAtCommit(v, [auth, accepted('principal_verification'), ticketDigest ? accepted('approval') : null]);
       const rec = record('shop.order', 'granted', ticketDigest ? 'authorized_and_approved' : 'authorized', v.ev, { ...base, result: { order_id: orderId } });
@@ -290,7 +297,8 @@ export async function createShop(cfg) {
     const { payload } = peek(d.receipt);
     if (!payload.id || !payload.holder_verified || !trust.has(payload.id_issuer)) fail(409, 'no_holder_verified_id_in_this_decision');
     // The affected party reports to the directory with its own signed receipt.
-    const res = await fetch(`${payload.id_issuer}/api/incidents`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ receipt: d.receipt, note: String(ctx.body.note ?? '').slice(0, 500) }) }).catch(() => null);
+    const report = await sign(TYP.incident, { iss: cfg.url, aud: payload.id_issuer, iat: nowSec(), jti: randomId(), receipt: d.receipt, note: String(ctx.body.note ?? '').slice(0, 500) }, key.privateJwk);
+    const res = await fetch(`${payload.id_issuer}/api/incidents`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ report }) }).catch(() => null);
     if (!res?.ok) fail(502, 'directory_did_not_accept_report', { detail: res ? await res.json().catch(() => ({})) : 'unreachable' });
     const { case_ref } = await res.json();
     db.run('UPDATE decisions SET case_ref = ? WHERE seq = ?', case_ref, d.seq);

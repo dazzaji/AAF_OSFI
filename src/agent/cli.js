@@ -15,7 +15,7 @@ const HELP = `aaf-agent: hold an Accountable Agent ID and use it at a counterpar
   aaf-agent order <sku> [--qty N] [--new]            needs an authorization; large orders need approval.
                                                      Repeating an order whose answer was lost does not buy twice;
                                                      --new places a second, separate order on purpose
-  aaf-agent continue                                 resume after the user approved in the browser
+  aaf-agent continue [--approval <id>]               resume after the user approved in the browser
   aaf-agent recheck                                  read-only: is the last ID this agent holds still accepted?
 
 Options: --pairwise (same ID at this shop every time)  --wait <seconds>  --no-browser
@@ -47,7 +47,7 @@ export async function run(argv) {
     case 'catalog': return agent.catalog(agent.shop());
     case 'quote': if (!pos[1]) throw new AgentError('usage', { usage: 'aaf-agent quote <sku> [--qty N]' }); return agent.act({ url: agent.shop() + '/api/quotes', body: { sku: pos[1], qty }, mode, wait: wait ?? 45 });
     case 'order': if (!pos[1]) throw new AgentError('usage', { usage: 'aaf-agent order <sku> [--qty N] [--new]' }); return agent.act({ url: agent.shop() + '/api/orders', body: { sku: pos[1], qty }, mode, wait: wait ?? 45, fresh: !!flags.new });
-    case 'continue': return agent.continue({ wait: wait ?? 5 });
+    case 'continue': return agent.continue({ wait: wait ?? 5, approvalId: typeof flags.approval === 'string' ? flags.approval : undefined });
     case 'recheck': return agent.act({ url: agent.shop() + '/api/check', body: {}, useCached: true });
     default: throw new AgentError('unknown_command', { command: cmd, hint: 'aaf-agent help' });
   }

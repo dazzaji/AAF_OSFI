@@ -4,7 +4,7 @@
     "name": "AAF Pilot Directory",
     "url": "https://directory.example",
     "mode": "local",
-    "now": 1795342549
+    "now": 1795343070
   },
   "viewer": {
     "role": "operator",
@@ -39,7 +39,7 @@
       "method": "Signed whole-list snapshot, republished at least every 5 seconds. Verifiers fetch the whole list; there is no per-ID lookup."
     },
     "signing_key": "One online Ed25519 key held on the service host. No hardware protection, no offline root, manual rotation.",
-    "what_the_directory_learns": "The counterparty each ID is issued for and when, the claims requested, and each action a principal approves. IDs are unlinkable to counterparties, not to this directory. Entries revoked together in the status list can reveal that they belong together.",
+    "what_the_directory_learns": "The counterparty each ID is issued for and when, the claims requested, and each action a principal approves. IDs are unlinkable to counterparties, not to this directory. Entries revoked together in the status list can reveal that they belong together. Within one transaction, the presentations that follow a request for more (and any retry) carry the same operation ID, so a counterparty can tell they are one transaction.",
     "records_kept": "Principal record, agent records, every issued ID with its agent and principal, grants, approvals, revocations, cases and disclosures.",
     "retention": "Records are kept for the life of the pilot and survive revocation. There is no automatic deletion: the operator deletes the pilot data by hand when the pilot closes.",
     "release_process": "An affected counterparty submits a signed decision receipt. An authenticated operator releases the agent label and verified identity for the IDs named in that receipt only, with a recorded basis, and the principal is notified. In this pilot the lawful request is a labelled simulation, not a real legal process.",
@@ -51,7 +51,7 @@
   },
   "status": {
     "rev": 2,
-    "published_at": 1795342547,
+    "published_at": 1795343068,
     "uri": "https://directory.example/.well-known/aaf-status"
   },
   "public": {
@@ -68,12 +68,12 @@
     },
     "agents": [
       {
-        "id": "ag_JV1F7I32DIzg",
+        "id": "ag_sTIcwQ66j289",
         "name": "Sample coding agent",
         "harness": "sample",
-        "fingerprint": "6rtxjVqBWQfGxWjA",
+        "fingerprint": "FmDETLFKxW_cJMcw",
         "status": "active",
-        "created": 1795342542,
+        "created": 1795343063,
         "revoked_at": null,
         "revoked_by": null,
         "policy": {
@@ -81,17 +81,17 @@
           "share_identity_with": []
         },
         "ids_issued": 7,
-        "last_issued": 1795342548,
+        "last_issued": 1795343070,
         "grants": [
           {
-            "id": "gr_3M8yceAlZR4_",
+            "id": "gr_-a-LdBAOmEGu",
             "action": "shop.order",
             "max_amount": 500,
             "currency": "USD",
             "version": 1,
             "status": "revoked",
-            "exp": 1797934542,
-            "revoked_at": 1795342542
+            "exp": 1797935063,
+            "revoked_at": 1795343064
           }
         ]
       }
@@ -100,11 +100,11 @@
     "pending_approvals": [],
     "recent_approvals": [
       {
-        "id": "ap_RDenYIs9zQzImxOk",
+        "id": "ap_4LUaknyvHFxPHkVo",
         "counterparty": "https://shop.example",
         "status": "void",
         "agent_name": "Sample coding agent",
-        "decided_at": 1795342542,
+        "decided_at": 1795343064,
         "action": "shop.order",
         "params": {
           "sku": "cards-5000",
@@ -125,7 +125,7 @@
     ],
     "notifications": [
       {
-        "ts": 1795342542,
+        "ts": 1795343063,
         "kind": "agent",
         "text": "Agent \"Sample coding agent\" was registered."
       }
@@ -134,140 +134,139 @@
   "operator": {
     "principals": [
       {
-        "id": "pr_WMeScVS9rZjK",
+        "id": "pr_TKiGg43xR4SR",
         "identity_type": "email",
         "identity_value": "operator@example.test",
         "assurance": "none",
         "is_operator": 1,
-        "created": 1795342542,
+        "created": 1795343063,
         "agents": 0
       },
       {
-        "id": "pr_xhWvdopLN3iw",
+        "id": "pr_fjTUnoW2rzPm",
         "identity_type": "email",
         "identity_value": "sample.principal@example.test",
         "assurance": "none (simulated)",
         "is_operator": 0,
-        "created": 1795342542,
+        "created": 1795343063,
         "agents": 1
       }
     ],
     "all_agents": [
       {
-        "id": "ag_JV1F7I32DIzg",
+        "id": "ag_sTIcwQ66j289",
         "name": "Sample coding agent",
         "status": "active",
-        "fingerprint": "6rtxjVqBWQfGxWjA",
+        "fingerprint": "FmDETLFKxW_cJMcw",
         "principal": "sample.principal@example.test"
       }
     ],
     "invites": [
       {
         "email": "operator@example.test",
-        "exp": 1795947342,
-        "used_at": 1795342542,
-        "created": 1795342542,
+        "exp": 1795947863,
+        "used_at": 1795343063,
+        "created": 1795343063,
         "delivery": "bootstrap file on the service host"
       },
       {
         "email": "sample.principal@example.test",
-        "exp": 1795515342,
-        "used_at": 1795342542,
-        "created": 1795342542,
+        "exp": 1795515863,
+        "used_at": 1795343063,
+        "created": 1795343063,
         "delivery": "local outbox (stand-in, not real delivery)"
       }
     ],
     "outbox": [
       {
-        "ts": 1795342542,
+        "ts": 1795343063,
         "to_addr": "sample.principal@example.test",
-        "subject": "Your invitation to AAF Pilot Directory",
-        "link": "https://directory.example/?invite=Mr8uwC8uSQOZUDBAskF5Ytcxlwy9UadU"
+        "subject": "Your invitation to AAF Pilot Directory"
       }
     ],
     "cases": [],
     "events": [
       {
         "seq": 7,
-        "ts": 1795342542,
+        "ts": 1795343064,
         "type": "grant.revoked",
         "data": {
-          "grant": "gr_3M8yceAlZR4_",
-          "agent": "ag_JV1F7I32DIzg",
+          "grant": "gr_-a-LdBAOmEGu",
+          "agent": "ag_sTIcwQ66j289",
           "by": "principal"
         },
-        "hash": "xKe-hB9areo6mNPLL__cv38nkxCpM-jfjkWmtTElBno"
+        "hash": "edxWQbKvaNMMyqzkPwNUryuj2No28JELU5mQI6wl6Ac"
       },
       {
         "seq": 6,
-        "ts": 1795342542,
+        "ts": 1795343064,
         "type": "approval.approved",
         "data": {
-          "approval": "ap_RDenYIs9zQzImxOk",
-          "agent": "ag_JV1F7I32DIzg",
-          "ticket_digest": "WmoJVF4pDzbkqtA-3e7BKfmkw-cl3Xy5L8orHdsj-iQ",
-          "ceremony": "2NMCNMq909SeQd9VwXXJGA",
-          "challenge": "mc-t8TJIlmpT_IjF-_ygo6M0j4Gjq2cWn8037PNEMV8",
+          "approval": "ap_4LUaknyvHFxPHkVo",
+          "agent": "ag_sTIcwQ66j289",
+          "ticket_digest": "4w6ppE_gROdJzk-fEMDauQFgf_XpGMNl74NFiTHv5BI",
+          "ceremony": "JBLbQ-ISpLHlSDH2UYodUA",
+          "challenge": "HCHbWuAdoa-xfp_j4ycrf5BWg8Huqldlxwt0Dk70nsg",
           "user_verified": true,
-          "verified_at": 1795342542,
+          "verified_at": 1795343064,
           "origin": "https://directory.example",
           "rp_id": "localhost"
         },
-        "hash": "702v-cVMUd4IewzKg6j5eVAl8ptOfhG6FJ11Ev9-sD0"
+        "hash": "JyVfBljxlt3nL5BHixWAvtOuXKNIuVYSGZ1TDqzNFHY"
       },
       {
         "seq": 5,
-        "ts": 1795342542,
+        "ts": 1795343063,
         "type": "approval.requested",
         "data": {
-          "approval": "ap_RDenYIs9zQzImxOk",
-          "agent": "ag_JV1F7I32DIzg",
+          "approval": "ap_4LUaknyvHFxPHkVo",
+          "agent": "ag_sTIcwQ66j289",
           "counterparty": "https://shop.example",
-          "ticket_digest": "WmoJVF4pDzbkqtA-3e7BKfmkw-cl3Xy5L8orHdsj-iQ"
+          "ticket_digest": "4w6ppE_gROdJzk-fEMDauQFgf_XpGMNl74NFiTHv5BI"
         },
-        "hash": "KASbCJfDC7B9y3tFUuw9h8L3p9NPbyYqmROd6kqWz-E"
+        "hash": "zhBHOD6WaArb7vOXlt52f1o5PceAwEWBXR_kFtSKkkg"
       },
       {
         "seq": 4,
-        "ts": 1795342542,
+        "ts": 1795343063,
         "type": "agent.registered",
         "data": {
-          "agent": "ag_JV1F7I32DIzg",
-          "principal": "pr_xhWvdopLN3iw",
-          "fingerprint": "6rtxjVqBWQfGxWjA"
+          "agent": "ag_sTIcwQ66j289",
+          "principal": "pr_fjTUnoW2rzPm",
+          "fingerprint": "FmDETLFKxW_cJMcw"
         },
-        "hash": "B8A2TJpkNw-bpGGvfNFO2tfExf9mxgnwPTZv11u7VYU"
+        "hash": "oyhsk2CjnCXx5ac9B7wlvnsv5BOlzAiUR3QdG7BBAEs"
       },
       {
         "seq": 3,
-        "ts": 1795342542,
+        "ts": 1795343063,
         "type": "principal.enrolled",
         "data": {
-          "principal": "pr_xhWvdopLN3iw",
+          "principal": "pr_fjTUnoW2rzPm",
           "identity_type": "email",
           "delivery": "local outbox (stand-in, not real delivery)"
         },
-        "hash": "CwyfIrEn5bDXbGBFB1kQDeup-cQf6Ku437Ncc0tcRTY"
+        "hash": "xy7y9q_WivdO3awJwyVsr4IbiTqpI8k5DaJELtodwCU"
       },
       {
         "seq": 2,
-        "ts": 1795342542,
+        "ts": 1795343063,
         "type": "invite.created",
         "data": {
           "email": "sample.principal@example.test"
         },
-        "hash": "RfG4fUVhE8zzqaJ8LAjtPTQ4DSC2YE-msBgxe0S98YM"
+        "hash": "zhGpvfiJZzQk1OhQP4pf_G4EsAiCBjuFaMYTBBhlP28"
       },
       {
         "seq": 1,
-        "ts": 1795342542,
+        "ts": 1795343063,
         "type": "principal.enrolled",
         "data": {
-          "principal": "pr_WMeScVS9rZjK",
+          "principal": "pr_TKiGg43xR4SR",
           "identity_type": "email",
           "delivery": "bootstrap file on the service host"
         },
-        "hash": "l-6-9vPoIaPcQG_uvWkzQmom_VV3PxiznVvts3meSMc"
+        "hash": "mwrfMF_iPWSwusmjqouc6lC6EN-0r9ZYzZM6qxS8iK4"
       }
     ]
   },

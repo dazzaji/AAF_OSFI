@@ -4,7 +4,7 @@
     "name": "Sandbox Print Shop",
     "url": "https://shop.example",
     "mode": "local",
-    "now": 1795342542
+    "now": 1795343064
   },
   "viewer": {
     "role": "admin"
@@ -59,7 +59,7 @@
       "issuer": "https://directory.example",
       "name": "AAF Pilot Directory",
       "status_rev": 1,
-      "status_age": 0,
+      "status_age": 1,
       "fresh": true,
       "max_age": 18,
       "error": null
@@ -68,11 +68,11 @@
   "decisions": [
     {
       "seq": 5,
-      "ts": 1795342542,
+      "ts": 1795343063,
       "action": "shop.order",
       "decision": "step_up",
       "reason": "approval_required",
-      "id": "id_iUD7AH5igghKNhtCd6Kenw",
+      "id": "id_khpty0M8o8nNGRr8Wl4vOQ",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [
@@ -115,17 +115,17 @@
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "m8Nsm4UkXDX0",
+      "receipt_ref": "_oVTbLCe69GV",
       "case_ref": null,
       "can_report": true
     },
     {
       "seq": 4,
-      "ts": 1795342542,
+      "ts": 1795343063,
       "action": "shop.order",
       "decision": "step_up",
       "reason": "claim_required",
-      "id": "id_wS5OxJU7EV0BWP6q8MtpMg",
+      "id": "id_5SS67WJEtKqTgUeVQjU4pA",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [],
@@ -162,17 +162,17 @@
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "ufC188I67iUL",
+      "receipt_ref": "igj1qtCaXVMO",
       "case_ref": null,
       "can_report": true
     },
     {
       "seq": 3,
-      "ts": 1795342542,
+      "ts": 1795343063,
       "action": "shop.order",
       "decision": "granted",
       "reason": "authorized",
-      "id": "id_pqYDsHlSoAEQe3uMeTjopQ",
+      "id": "id__Aiqe7IrxYHtt6AENILSCA",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [
@@ -199,7 +199,7 @@
         "currency": "USD"
       },
       "result": {
-        "order_id": "ord_l6txupyW"
+        "order_id": "ord_esHNjhfD"
       },
       "required": null,
       "learned": [
@@ -212,17 +212,17 @@
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "2B1fmY3aXUvb",
+      "receipt_ref": "KG4gcr_Wvd4U",
       "case_ref": null,
       "can_report": true
     },
     {
       "seq": 2,
-      "ts": 1795342542,
+      "ts": 1795343063,
       "action": "shop.order",
       "decision": "step_up",
       "reason": "claim_required",
-      "id": "id_iYPyLkLXqjdK2Q6pgXWbIg",
+      "id": "id_mtuidYfS4Ma6BBBrCKUzUA",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [],
@@ -259,17 +259,17 @@
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "o9a7eoPhSpbq",
+      "receipt_ref": "kkV5mKAOb5Mz",
       "case_ref": null,
       "can_report": true
     },
     {
       "seq": 1,
-      "ts": 1795342542,
+      "ts": 1795343063,
       "action": "shop.quote",
       "decision": "granted",
       "reason": "valid_id",
-      "id": "id_2NWNrAQ4JM62nHKW6Xeo6Q",
+      "id": "id_IJSHe3_wwD83HydmBTqryA",
       "id_mode": "ephemeral",
       "issuer": "https://directory.example",
       "claims": [],
@@ -283,7 +283,7 @@
         "currency": "USD"
       },
       "result": {
-        "quote_id": "q_wBZmDHeo"
+        "quote_id": "q__RPk1NOe"
       },
       "required": null,
       "learned": [
@@ -294,15 +294,15 @@
         "Which agent software this is, or what else it has done elsewhere",
         "Whether this is the same agent as any earlier visit"
       ],
-      "receipt_ref": "CPRdjKD3TkL5",
+      "receipt_ref": "WZCUoy2FLnvX",
       "case_ref": null,
       "can_report": true
     }
   ],
   "orders": [
     {
-      "id": "ord_l6txupyW",
-      "ts": 1795342542,
+      "id": "ord_esHNjhfD",
+      "ts": 1795343063,
       "sku": "cards-500",
       "qty": 1,
       "total": 38,

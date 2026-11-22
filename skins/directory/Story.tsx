@@ -138,7 +138,7 @@ export default function Story({ data, viewer, source, actions }: SkinProps<Direc
                   {(op.outbox ?? []).length > 0 && (
                     <div className="border border-amber-300 bg-amber-50 rounded-lg p-3">
                       <div className="text-xs font-bold text-amber-800 mb-1">LOCAL STAND-IN: outbox (these would be emails on the hosted build)</div>
-                      {op.outbox.map((m, i) => <div key={i} className="text-sm break-all"><span className="text-stone-500">to {m.to_addr}:</span> <code>{m.link}</code></div>)}
+                      {op.outbox.map((m, i) => <div key={i} className="text-sm"><span className="text-stone-500">to {m.to_addr}:</span> {m.subject} (the link was shown once, when you created it)</div>)}
                     </div>
                   )}
                 </div>

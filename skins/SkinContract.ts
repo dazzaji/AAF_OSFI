@@ -66,7 +66,7 @@ export interface DirectoryData {
     principals: { id: string; identity_type: string; identity_value: string; assurance: string; is_operator: number; created: number; agents: number }[];
     all_agents: { id: string; name: string; status: string; fingerprint: string; principal: string }[];
     invites: { email: string; exp: number; used_at: number | null; created: number; delivery: string }[];
-    outbox: { ts: number; to_addr: string; subject: string; link: string }[];   // local stand-in only
+    outbox: { ts: number; to_addr: string; subject: string }[];   // local stand-in only; links are never given to a design
     cases: { id: string; counterparty: string; sub: string; note: string; status: 'open' | 'released'; created: number; released_at: number | null; basis: string | null; disclosure: any | null }[];
     events: { seq: number; ts: number; type: string; data: any; hash: string }[];
   };

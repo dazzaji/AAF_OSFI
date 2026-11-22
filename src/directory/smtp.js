@@ -6,7 +6,8 @@ import net from 'node:net';
 import tls from 'node:tls';
 import { spawn } from 'node:child_process';
 
-const message = ({ from, to, subject, body }) => [`From: ${from}`, `To: ${to}`, `Subject: ${subject}`, `Date: ${new Date().toUTCString()}`, `Message-ID: <${Date.now()}.${Math.random().toString(36).slice(2)}@aaf-pilot>`, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', body].join('\r\n');
+// Lines end in CRLF throughout: strict relays reject bare line feeds.
+const message = ({ from, to, subject, body }) => [`From: ${from}`, `To: ${to}`, `Subject: ${subject}`, `Date: ${new Date().toUTCString()}`, `Message-ID: <${Date.now()}.${Math.random().toString(36).slice(2)}@aaf-pilot>`, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', String(body).replace(/\r?\n/g, '\r\n')].join('\r\n');
 const clean = (s) => String(s).replace(/[\r\n]/g, ' ');
 
 export async function smtpSend(url, mail) {

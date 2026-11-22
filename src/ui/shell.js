@@ -27,7 +27,7 @@ async function api(method, path, body) {
 const explain = (e) => ({ sign_in_required: 'Please sign in with your passkey first.', passkey_verification_failed: 'The passkey check did not succeed.', ceremony_expired: 'That took too long. Please try again.', grant_changed: 'The authorization changed since this was requested.', approval_not_found_or_expired: 'This request has expired or was already decided.', pairing_not_found_or_expired: 'This registration request has expired or was already decided.', invite_invalid_or_used: 'This invitation link has expired or was already used.', operator_only: 'Only the directory operator can do that.', basis_required: 'Please record the basis for the release (at least 10 characters).', mail_not_configured: 'Email delivery is not configured on this server.', admin_only: 'Shop administrator sign-in is required.', NotAllowedError: 'The passkey prompt was cancelled.' }[e.code ?? e.name] ?? `Something went wrong (${e.code ?? e.name ?? e.message}).`);
 
 // ---------- layout ----------
-const skinSelect = el('select', { id: 'skin', onchange: (e) => { state.skin = e.target.value; store.set('skin', state.skin); loadSkin(true); } });
+const skinSelect = el('select', { id: 'skin', onchange: (e) => { state.skin = e.target.value; store.set('skin', state.skin); loadSkin(false); } });
 const dataSelect = el('select', { id: 'data', onchange: (e) => { state.source = e.target.value; refreshData(true); } });
 const who = el('span', { class: 'who' });
 const authBtn = el('button', { class: 'btn', onclick: () => (state.view?.viewer?.role === 'public' ? signIn() : signOut()) });
@@ -159,17 +159,19 @@ window.addEventListener('message', (e) => {
   if (e.source !== frame.contentWindow) return;
   const m = e.data;
   if (!m || typeof m !== 'object') return;
-  if (m.aaf === 'ready') { state.frameReady = true; state.loadedSkinKey = ''; loadSkin(true); pushProps(); return; }
+  if (m.aaf === 'ready') { state.frameReady = true; state.loadedSkinKey = ''; loadSkin(false); pushProps(); return; }
   if (m.aaf === 'skin-error') { say(`Design "${state.skin}" has a problem: ${String(m.message).slice(0, 200)}`, 'error'); return; }
   if (m.aaf !== 'action' || typeof m.name !== 'string') return;
   if (m.name === 'selectSkin' || m.name === 'selectData') return; // menus belong to the shell
   const fn = Object.hasOwn(ACTIONS, m.name) ? ACTIONS[m.name] : null;
   if (!fn) { say(`This design asked for something the page does not offer (${m.name.slice(0, 40)}).`, 'error'); return; }
   if (state.source !== 'live') { say('Sample data is showing. Switch Data to "Live" to act.', 'info'); return; }
-  // A trusted screen that is already open is never replaced or dismissed by a skin.
-  if (!modalHost.hidden) return;
+  // A trusted screen that is open, or about to open, is never replaced or
+  // dismissed by a skin. The slot is taken before any network call is made.
+  if (!modalHost.hidden || state.dialogReserved) return;
+  state.dialogReserved = true;
   const args = Array.isArray(m.args) ? m.args.slice(0, 1).map((a) => (typeof a === 'string' || typeof a === 'number' ? a : undefined)) : [];
-  Promise.resolve(fn(...args)).catch((err) => say(explain(err), 'error'));
+  Promise.resolve().then(() => fn(...args)).catch((err) => say(explain(err), 'error')).finally(() => { state.dialogReserved = false; });
 });
 function pushProps() {
   if (!state.frameReady) return;
@@ -184,6 +186,13 @@ function loadSkin(force = false) {
   if (entry.name !== state.skin) { state.skin = entry.name; skinSelect.value = entry.name; }
   const key = `${entry.name}@${entry.mtime}`;
   if (!force && key === state.loadedSkinKey) return;
+  if (state.loadedSkinKey && state.loadedSkinKey !== key) {
+    // Switching or reloading a design starts from a brand-new frame, so no
+    // code from the previous design keeps running.
+    state.frameReady = false; state.loadedSkinKey = '';
+    frame.src = `/ui/frame.html?t=${Date.now()}`;
+    return; // the new frame announces "ready", which loads the design
+  }
   state.loadedSkinKey = key;
   frame.contentWindow.postMessage({ aaf: 'skin', url: `${location.origin}/ui/skins/${entry.name}.js?v=${entry.mtime}`, key }, '*');
 }

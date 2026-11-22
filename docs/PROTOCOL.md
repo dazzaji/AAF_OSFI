@@ -16,9 +16,10 @@ This is the small protocol the pilot uses. It is one way to meet the paper's req
 | `typ` | Signed by | Purpose | Main fields |
 |---|---|---|---|
 | `aaf-id+jwt` | Directory | The ID | `iss`, `sub` (the ID), `aud` (one counterparty), `iat`, `exp`, `jti`, `cnf.jwk` (presentation key), `id_mode`, `status.idx` |
-| `aaf-claim+jwt` | Directory, or the agent itself | One claim about the same ID | `sub`, `aud`, `exp`, `attested_by` (`directory` or `self`), `claim.type`, `claim.value`, `status.idx` |
+| `aaf-claim+jwt` | Directory, or the agent itself | One claim about the same ID | `sub`, `id_jti` (the one issuance it belongs to), `aud`, `exp`, `attested_by` (`directory` or `self`), `claim.type`, `claim.value`, `status.idx` |
 | `aaf-proof+jwt` | Agent, with the presentation key | Holder proof for one HTTP request | `aud`, `htm`, `htu`, `body_hash`, `creds_hash`, `nonce`, `op`, `iat` |
 | `aaf-ticket+jwt` | Shop | "Approve exactly this" | `aud` (the directory), `for_id`, `action`, `params`, `action_digest`, `exp` |
+| `aaf-incident+jwt` | Shop | Reports one receipt to the directory | `aud` (the directory), `receipt`, `note`, `iat` |
 | `aaf-receipt+jwt` | Shop | Record of one decision | `action`, `params`, `action_digest`, `decision`, `reason`, `holder_verified`, `id`, `id_jti`, `id_issuer`, `claims`, `status` |
 | `aaf-statuslist+jwt` | Directory | Revocation snapshot | `iat`, `exp`, `rev`, `status_list.lst` (one bit per ID or claim, deflated) |
 | `aaf-agent-req+jwt` | Agent, with its long-term key | Authenticates a request to the directory | `iss` (agent record), `aud`, `htm`, `htu`, `body_hash`, `iat`, `jti` |
@@ -83,7 +84,7 @@ The principal opens `review_url`. The directory shows the action and parameters 
 
 **6. Revocation.** The principal revokes one authorization or the whole registration with a passkey. The directory sets the status bits of every affected, unexpired ID and claim, raises the list revision and republishes. The shop fetches the whole list every 5 seconds and refuses to rely on a list older than 18 seconds.
 
-**7. Attribution.** The shop sends the directory its signed receipt for a decision in which the holder was verified. The directory checks the shop's signature and that the ID was issued for that shop, and opens a case. An operator releases, with a passkey and a recorded basis, the agent label and verified identity for that one issuance. The principal is notified at both steps.
+**7. Attribution.** The shop sends the directory a signed report containing its signed receipt for a decision in which the holder was verified. The directory checks the shop's signature and that the ID was issued for that shop, and opens a case. An operator releases, with a passkey and a recorded basis, the agent label and verified identity for that one issuance. The principal is notified at both steps.
 
 ## Request retries
 
