@@ -115,7 +115,7 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
     // Is this receipt the counterparty's signed "done" for exactly this
     // operation? Checked before the agent forgets the operation, so a forged or
     // unrelated answer cannot make it drop its retry state.
-    async checkReceipt({ receipt, aud, opSecret, action, body, viaApproval = false }) {
+    async checkReceipt({ receipt, aud, opSecret, action, body, ticketDigest = null }) {
       try {
         const res = await fetch(aud + '/.well-known/aaf-counterparty', { redirect: 'error', signal: AbortSignal.timeout(10000) });
         const keys = (await res.json()).jwks?.keys ?? [];
@@ -127,9 +127,10 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
         if (action && r.action !== action) return 'receipt_for_another_action';
         // Normally the receipt names this operation. One exception: an order
         // already written under the same single-use approval, reached again
-        // under a new operation ID. Only the agent the approval was issued to
-        // can present it, and the parameters are still checked below.
-        if (r.op !== sha256b64u(opSecret) && !(viaApproval && r.reason === 'authorized_and_approved')) return 'receipt_for_another_operation';
+        // under a new operation ID. The receipt names the approval ticket it
+        // consumed, and that must be the ticket in the approval this agent
+        // just presented. The parameters are still checked below.
+        if (r.op !== sha256b64u(opSecret) && !(ticketDigest && r.ticket === ticketDigest)) return 'receipt_for_another_operation';
         if (body?.sku !== undefined && (r.params?.sku !== body.sku || r.params?.qty !== (body.qty ?? 1))) return 'receipt_for_other_parameters';
         return null;
       } catch { return 'receipt_signature_invalid'; }
@@ -187,7 +188,8 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
         if (res.http_status === 200 && !res.receipt) throw new AgentError('incomplete_answer', { hint: 'Repeat the same request; it will not be written twice.' });
         if (res.http_status === 200) {
           const action = { '/api/orders': 'shop.order', '/api/quotes': 'shop.quote' }[new URL(url).pathname];
-          const bad = await this.checkReceipt({ receipt: res.receipt, aud, opSecret: requestKey, action, body, viaApproval: !!approvalId });
+          const presentedApproval = creds.claims.map((c) => { try { return peek(c).payload.claim; } catch { return null; } }).find((c) => c?.type === 'approval');
+          const bad = await this.checkReceipt({ receipt: res.receipt, aud, opSecret: requestKey, action, body, ticketDigest: presentedApproval?.value?.ticket_digest ?? null });
           if (bad) throw new AgentError('receipt_not_accepted', { reason: bad, hint: 'The answer did not carry a valid signed receipt for this operation. Nothing was forgotten; repeat the same request.' });
         }
         if (res.http_status === 200) { remove(opFile); if (approvalId) dropPending(approvalId); return { status: 'done', result: res.quote ?? res.order ?? res, repeated: res.repeated, ...base }; }

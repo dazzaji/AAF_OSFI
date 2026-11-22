@@ -32,6 +32,7 @@ services:
       AAF_DIRECTORY_DATA: /data
     volumes:
       - directory-data:/data
+      - ${AAF_MAIL_SECRETS_DIR:-./no-mail-secrets}:/run/aaf-mail:ro   # holds only the mail key file, if any
       - ../skins:/app/skins:ro          # drop a new skin file here; it appears without a restart
       - ../datasets:/app/datasets:ro
     healthcheck: { test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+process.env.AAF_DIRECTORY_PORT+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 15s, timeout: 5s, retries: 4 }

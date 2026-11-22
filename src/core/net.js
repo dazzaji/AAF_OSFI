@@ -14,11 +14,21 @@ export function schemeAllowed(url, { mode = 'local', staging = false } = {}) {
   return mode === 'local' || (staging && isLocalhost(url));
 }
 
-export async function safeFetch(url, { allow = null, mode = 'local', staging = false, method = 'GET', headers, body, timeout = 4000, maxBytes = 256 * 1024 } = {}) {
+// Optional private routes between services on the same host, written as
+// "https://public-a=http://internal-a:port,https://public-b=http://internal-b:port".
+// Only the connection is redirected. Which origins are allowed, and every
+// issuer and audience check, still use the public address; signatures do the
+// authenticating, so the private hop needs no TLS of its own.
+function routed(u, routes) {
+  for (const pair of String(routes ?? '').split(',')) { const i = pair.indexOf('='); if (i < 0) continue; const from = pair.slice(0, i).trim().replace(/\/$/, ''); const to = pair.slice(i + 1).trim().replace(/\/$/, ''); if (from && to && u.origin === new URL(from).origin) return new URL(u.pathname + u.search, to); }
+  return u;
+}
+
+export async function safeFetch(url, { allow = null, mode = 'local', staging = false, routes = '', method = 'GET', headers, body, timeout = 4000, maxBytes = 256 * 1024 } = {}) {
   let u; try { u = new URL(url); } catch { throw new HttpError(400, 'invalid_url'); }
   if (allow && !allow.includes(u.origin)) throw new HttpError(403, 'destination_not_allowed', { origin: u.origin });
   if (!schemeAllowed(url, { mode, staging })) throw new HttpError(400, 'destination_must_use_https', { origin: u.origin });
-  const res = await fetch(u, { method, headers, body, redirect: 'error', signal: AbortSignal.timeout(timeout) });
+  const res = await fetch(routed(u, routes), { method, headers, body, redirect: 'error', signal: AbortSignal.timeout(timeout) });
   const len = Number(res.headers.get('content-length') ?? 0);
   if (len > maxBytes) throw new Error('response too large');
   const buf = Buffer.from(await res.arrayBuffer());

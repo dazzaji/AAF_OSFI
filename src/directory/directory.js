@@ -57,7 +57,8 @@ export function directoryConfig(env = process.env) {
     smtp: env.AAF_SMTP_URL ?? null,
     mailFrom: env.AAF_MAIL_FROM ?? null,
     // The Resend key is read from a file where possible, so it is not in the environment.
-    resendKey: env.AAF_RESEND_KEY_FILE ? readKeyFile(env.AAF_RESEND_KEY_FILE) : (env.AAF_RESEND_API_KEY || null),
+    resendKey: env.AAF_RESEND_KEY_FILE ? (readKeyFile(env.AAF_RESEND_KEY_FILE) ?? (() => { throw new Error('AAF_RESEND_KEY_FILE is set but the file is missing, empty or unreadable'); })()) : (env.AAF_RESEND_API_KEY || null),
+    internalRoutes: env.AAF_INTERNAL_ROUTES ?? '',
     mailDailyCap: Math.min(Math.max(Number(env.AAF_MAIL_DAILY_CAP ?? 50), 1), 200),
     mailRetryWindow: Number(env.AAF_MAIL_RETRY_WINDOW ?? 600),          // seconds; well inside the provider's 24 h idempotency window
     mailRetryDelays: (env.AAF_MAIL_RETRY_DELAYS ?? '20,60').split(',').map(Number), // waits before the 2nd and 3rd attempt
@@ -203,6 +204,8 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
     try { await transport.send({ ...inviteMail(inv.email, token), idemKey: inv.idem_key }); ok = true; } catch { /* never log provider text, addresses, links or keys */ }
     // Only an invitation that is still pending can become redeemable: one that
     // failed or was superseded meanwhile stays that way, even if this send landed.
+    // A success that arrives after the retry window closed does not count.
+    if (ok && nowSec() - inv.created > cfg.mailRetryWindow) return giveUp('accepted after the retry window');
     if (ok) { if (setState(token, 'accepted', 'pending')) logEvent('invite.accepted_by_mail_service', {}); return; }
     const wait = cfg.mailRetryDelays[inv.attempts]; // attempts counted before this try
     if (wait === undefined || nowSec() + wait - inv.created > cfg.mailRetryWindow) return giveUp('attempts used up');
@@ -278,6 +281,8 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
       }
       db.run('INSERT INTO passkeys (cred_id, principal_id, public_key, counter, transports, created) VALUES (?,?,?,?,?,?)', cred.id, p.id, b64u(cred.publicKey), cred.counter, JSON.stringify(cred.transports ?? []), nowSec());
       logEvent('principal.enrolled', { principal: p.id, identity_type: 'email', delivery: inv.state });
+      // The first-run operator link has done its job: remove the file that held it.
+      if (inv.state === 'bootstrap') fs.rmSync(path.join(cfg.dataDir, 'OPERATOR-INVITE.txt'), { force: true });
       return p.id;
     });
     startSession(ctx, principalId);
@@ -651,7 +656,7 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
   // checked against that list before any request leaves.
   async function counterpartyKeys(cpOrigin) {
     if (cfg.trustedCounterparties && !cfg.trustedCounterparties.includes(cpOrigin)) fail(403, 'counterparty_not_trusted', { counterparty: cpOrigin });
-    const res = await safeFetch(`${cpOrigin}/.well-known/aaf-counterparty`, { allow: cfg.trustedCounterparties, mode: cfg.mode, staging: cfg.staging }).catch((e) => { if (e.status) throw e; return null; });
+    const res = await safeFetch(`${cpOrigin}/.well-known/aaf-counterparty`, { allow: cfg.trustedCounterparties, mode: cfg.mode, staging: cfg.staging, routes: cfg.internalRoutes }).catch((e) => { if (e.status) throw e; return null; });
     if (!res?.ok) fail(502, 'counterparty_keys_unavailable');
     let meta; try { meta = res.json(); } catch { fail(502, 'counterparty_keys_unavailable'); }
     return meta.jwks?.keys ?? [];

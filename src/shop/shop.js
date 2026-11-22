@@ -38,6 +38,7 @@ export function shopConfig(env = process.env) {
     statusAcceptAge: 18, // must match the directory's published budget
     clockSkew: 2,
     projectRoot: env.AAF_PROJECT_ROOT ?? path.resolve('.'),
+    internalRoutes: env.AAF_INTERNAL_ROUTES ?? '',
     staging: env.AAF_STAGING === '1',   // private staging only: allows plain-HTTP localhost origins
     trustProxy: env.AAF_TRUST_PROXY === '1',
     rateLimit: Number(env.AAF_RATE_LIMIT ?? ((env.AAF_ENV ?? 'local') === 'local' ? 0 : 600)), // all requests a minute per address; 0 = off
@@ -63,7 +64,7 @@ export async function createShop(cfg) {
   const db = openDb(path.join(cfg.dataDir, 'shop.sqlite'), SCHEMA);
   const key = await loadOrCreateKey(path.join(cfg.dataDir, 'signing-key.json'));
   const app = createApp({ name: 'shop', rateLimit: cfg.rateLimit, postLimit: cfg.postLimit, trustProxy: cfg.trustProxy });
-  const net = { allow: cfg.trusted.map((t) => new URL(t).origin), mode: cfg.mode, staging: cfg.staging, timeout: 3000 };
+  const net = { allow: cfg.trusted.map((t) => new URL(t).origin), mode: cfg.mode, staging: cfg.staging, timeout: 3000, routes: cfg.internalRoutes };
   const origin = new URL(cfg.url).origin;
   const ADMIN_COOKIE = 'aafshop_admin';
   // The policy file is re-read on every request, so thresholds can change mid-demo.
@@ -205,7 +206,7 @@ export async function createShop(cfg) {
   // Signed synchronously so a write and its receipt commit in one transaction.
   function record(action, decision, reason, ev, extra = {}) {
     const actionDigest = extra.action_digest ?? null;
-    const receipt = signSync(TYP.receipt, { iss: cfg.url, iat: nowSec(), jti: randomId(), action, op: ev?.op ?? null, params: extra.params ?? null, action_digest: actionDigest, decision, reason, holder_verified: ev?.holder_verified === true, id: ev?.id ?? null, id_jti: ev?.id_jti ?? null, id_issuer: ev?.issuer ?? null, id_mode: ev?.id_mode ?? null, claims: (ev?.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status: ev?.status ?? null, result: extra.result ?? null }, key.privateJwk);
+    const receipt = signSync(TYP.receipt, { iss: cfg.url, iat: nowSec(), jti: randomId(), action, op: ev?.op ?? null, ticket: extra.ticket_digest ?? null, params: extra.params ?? null, action_digest: actionDigest, decision, reason, holder_verified: ev?.holder_verified === true, id: ev?.id ?? null, id_jti: ev?.id_jti ?? null, id_issuer: ev?.issuer ?? null, id_mode: ev?.id_mode ?? null, claims: (ev?.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status: ev?.status ?? null, result: extra.result ?? null }, key.privateJwk);
     const { op_proven: _p, ...evOut } = ev ?? {};
     return { receipt, detail: { ev: ev ? evOut : null, params: extra.params ?? null, result: extra.result ?? null, required: extra.required ?? null } };
   }
@@ -331,7 +332,7 @@ export async function createShop(cfg) {
       if (prior && idem?.startsWith('op:') && !v.ev.op_proven) throw new HttpError(409, 'operation_secret_required', { decision: 'repeat', hint: 'This operation already completed. Send its secret to get the stored answer.' });
       if (prior) return { order_id: prior.id, receipt: prior.receipt, repeated: true };
       recheckAtCommit(v, [auth, accepted('principal_verification'), ticketDigest ? accepted('approval') : null]);
-      const rec = record('shop.order', 'granted', ticketDigest ? 'authorized_and_approved' : 'authorized', v.ev, { ...base, result: { order_id: orderId } });
+      const rec = record('shop.order', 'granted', ticketDigest ? 'authorized_and_approved' : 'authorized', v.ev, { ...base, ticket_digest: ticketDigest, result: { order_id: orderId } }); // the receipt names the approval ticket it consumed
       db.run('INSERT INTO orders (id, ts, sku, qty, total, currency, id_sub, approved, idem, receipt) VALUES (?,?,?,?,?,?,?,?,?,?)', orderId, nowSec(), it.sku, qty, total, p.currency, v.id.sub, ticketDigest ? 1 : 0, idem, rec.receipt);
       if (ticketDigest) db.run('UPDATE tickets SET order_id = ? WHERE digest = ?', orderId, ticketDigest);
       saveDecision('shop.order', 'granted', ticketDigest ? 'authorized_and_approved' : 'authorized', rec);
