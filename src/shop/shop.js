@@ -73,7 +73,7 @@ export async function createShop(cfg) {
       // Never step back to an older revision or an older snapshot, including
       // across a restart of this shop: the highest revision seen is kept on disk.
       const mark = db.get('SELECT rev, iat FROM watermarks WHERE issuer = ?', t.issuer);
-      if ((t.status && (payload.rev < t.status.rev || payload.iat < t.status.iat)) || (mark && (payload.rev < mark.rev || payload.iat < mark.iat))) throw new Error('stale status list offered');
+      if ((t.status && (payload.rev < t.status.rev || (payload.rev === t.status.rev && payload.iat < t.status.iat))) || (mark && (payload.rev < mark.rev || (payload.rev === mark.rev && payload.iat < mark.iat)))) throw new Error('stale status list offered');
       t.status = { rev: payload.rev, iat: payload.iat, bits: decodeList(payload.status_list.lst) };
       db.run('INSERT INTO watermarks (issuer, rev, iat) VALUES (?,?,?) ON CONFLICT(issuer) DO UPDATE SET rev = excluded.rev, iat = excluded.iat', t.issuer, payload.rev, payload.iat);
       t.lastError = null;

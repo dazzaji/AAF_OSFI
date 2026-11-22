@@ -13,7 +13,7 @@ html,body{margin:0;height:100%;font-family:ui-sans-serif,system-ui,-apple-system
 .btn.primary{background:#1d4ed8;border-color:#1d4ed8;color:#fff;font-weight:600}
 .btn:disabled{opacity:.6;cursor:wait}
 .bar .btn{background:#1e293b;color:#fff;border-color:#475569}
-.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);padding:10px 16px;border-radius:10px;background:#0f172a;color:#fff;font-size:14px;max-width:80vw;box-shadow:0 6px 24px rgba(0,0,0,.25);z-index:30}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);padding:10px 16px;border-radius:10px;background:#0f172a;color:#fff;font-size:14px;max-width:80vw;box-shadow:0 6px 24px rgba(0,0,0,.25);z-index:10}
 .toast.error{background:#b91c1c}.toast.ok{background:#15803d}
 .modal-host{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px}
 .modal-host[hidden],.toast[hidden]{display:none}

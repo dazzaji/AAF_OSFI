@@ -181,7 +181,7 @@ window.addEventListener('message', (e) => {
   const m = e.data;
   if (!m || typeof m !== 'object') return;
   if (m.aaf === 'ready') { state.frameReady = true; state.loadedSkinKey = ''; loadSkin(false); pushProps(); return; }
-  if (m.aaf === 'skin-error') { say(`Design "${state.skin}" has a problem: ${String(m.message).slice(0, 200)}`, 'error'); return; }
+  if (m.aaf === 'skin-error') { if (!modalHost.hidden) return; say(`Design "${state.skin}" has a problem: ${String(m.message).slice(0, 200)}`, 'error'); return; }
   if (m.aaf !== 'action' || typeof m.name !== 'string') return;
   if (m.name === 'selectSkin' || m.name === 'selectData') return; // menus belong to the shell
   const fn = Object.hasOwn(ACTIONS, m.name) ? ACTIONS[m.name] : null;
