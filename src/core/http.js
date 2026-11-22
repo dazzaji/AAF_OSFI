@@ -17,9 +17,10 @@ export function createApp({ name }) {
     get: (p, h) => add('GET', p, h),
     post: (p, h) => add('POST', p, h),
     async handle(req, res) {
-      const url = new URL(req.url, 'http://x');
-      const ctx = { req, res, url, path: url.pathname, query: url.searchParams, params: {}, cookies: parseCookies(req.headers.cookie), rawBody: '', body: null, headers: req.headers };
+      let ctx = { path: String(req.url) };
       try {
+        const url = new URL(req.url, 'http://x');
+        ctx = { req, res, url, path: url.pathname, query: url.searchParams, params: {}, cookies: parseCookies(req.headers.cookie), rawBody: '', body: null, headers: req.headers };
         if (req.method === 'OPTIONS') return send(res, 204, null, { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST' });
         if (req.method === 'POST') {
           ctx.rawBody = await readBody(req);
@@ -30,7 +31,7 @@ export function createApp({ name }) {
           if (r.method !== req.method) continue;
           const m = r.re.exec(ctx.path);
           if (!m) continue;
-          r.keys.forEach((k, i) => { ctx.params[k] = decodeURIComponent(m[i + 1]); });
+          r.keys.forEach((k, i) => { ctx.params[k] = safeDecode(m[i + 1]); });
           const out = await r.handler(ctx);
           if (!res.writableEnded) send(res, 200, out ?? { ok: true });
           return;
@@ -43,7 +44,7 @@ export function createApp({ name }) {
       }
     },
     listen(port, host = '127.0.0.1') {
-      const server = http.createServer((req, res) => app.handle(req, res));
+      const server = http.createServer((req, res) => { app.handle(req, res).catch((e) => { console.error(`[${name}] unhandled`, e); try { send(res, 500, { error: 'internal_error' }); } catch { /* socket gone */ } }); });
       return new Promise((resolve) => server.listen(port, host, () => resolve(server)));
     },
   };
@@ -67,9 +68,11 @@ function readBody(req, limit = 256 * 1024) {
   });
 }
 
+// Malformed percent-escapes must never take the service down.
+function safeDecode(s) { try { return decodeURIComponent(s); } catch { return ''; } }
 function parseCookies(header = '') {
   const out = {};
-  for (const part of header.split(';')) { const i = part.indexOf('='); if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim()); }
+  for (const part of String(header).split(';')) { const i = part.indexOf('='); if (i > 0) out[part.slice(0, i).trim()] = safeDecode(part.slice(i + 1).trim()); }
   return out;
 }
 

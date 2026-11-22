@@ -112,6 +112,7 @@ export async function createShop(cfg) {
     if (proof.creds_hash !== credsHash) throw new Decision('denied', 'proof_credentials_mismatch', { ev });
     if (Math.abs(now - proof.iat) > 60) throw new Decision('denied', 'proof_stale', { ev });
     if (db.run('UPDATE challenges SET used = 1 WHERE nonce = ? AND used = 0 AND exp > ?', String(proof.nonce ?? ''), now).changes !== 1) throw new Decision('denied', 'nonce_invalid_or_replayed', { ev });
+    ev.holder_verified = true; // from here on, the presenter is known to hold the ID's key
 
     // 3. Status, from the cached whole list. If the list is older than the
     // agreed budget the honest answer is "I cannot tell", and nothing is written.
@@ -141,34 +142,50 @@ export async function createShop(cfg) {
           else if (c.aud !== cfg.url) entry.reason = 'wrong_audience';
           else if (c.exp <= now - cfg.clockSkew) entry.reason = 'claim_expired';
           else if (getBit(t.status.bits, c.status.idx)) entry.reason = 'claim_revoked';
-          else entry.accepted = true;
+          else { entry.accepted = true; entry.idx = c.status.idx; }
         }
       } catch { entry.reason = 'claim_signature_invalid'; }
       claims.push(entry);
     }
-    ev.claims = claims.map(({ value, ...rest }) => ({ ...rest, value: rest.type === 'principal_identity' || rest.type === 'principal_verification' || rest.type === 'authorization' ? value : undefined }));
+    ev.claims = claims.map(({ value, idx, ...rest }) => ({ ...rest, value: rest.type === 'principal_identity' || rest.type === 'principal_verification' || rest.type === 'authorization' ? value : undefined }));
     return { id, claims, ev, issuerName: t.name };
   }
 
+  // Run inside the write transaction: look again at the newest status list the
+  // shop holds, so a revocation that arrived while the receipt was being signed
+  // still stops the write.
+  function recheckAtCommit(v, usedClaims) {
+    const t = trust.get(v.id.iss); const now = nowSec();
+    if (!t?.status || now - t.status.iat > cfg.statusAcceptAge + cfg.clockSkew) throw new Decision('deferred', 'status_too_old');
+    if (v.id.exp <= now - cfg.clockSkew) throw new Decision('denied', 'id_expired');
+    if (getBit(t.status.bits, v.id.status.idx)) throw new Decision('denied', 'id_revoked');
+    for (const c of usedClaims) if (c && getBit(t.status.bits, c.idx)) throw new Decision('step_up', 'claim_required', { required: [{ type: c.type, not_accepted_because: ['claim_revoked'] }] });
+  }
+
   // ---------- recording and answering ----------
+  // Every protected decision gets a signed receipt that names the exact action
+  // and parameters, whether the answer was yes, no, or "I need more".
   async function record(action, decision, reason, ev, extra = {}) {
     const actionDigest = extra.action_digest ?? null;
-    const receipt = await sign(TYP.receipt, { iss: cfg.url, iat: nowSec(), jti: randomId(), action, action_digest: actionDigest, decision, reason, id: ev?.id ?? null, id_issuer: ev?.issuer ?? null, id_mode: ev?.id_mode ?? null, claims: (ev?.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status: ev?.status ?? null, result: extra.result ?? null }, key.privateJwk);
+    const receipt = await sign(TYP.receipt, { iss: cfg.url, iat: nowSec(), jti: randomId(), action, params: extra.params ?? null, action_digest: actionDigest, decision, reason, holder_verified: ev?.holder_verified === true, id: ev?.id ?? null, id_issuer: ev?.issuer ?? null, id_mode: ev?.id_mode ?? null, claims: (ev?.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status: ev?.status ?? null, result: extra.result ?? null }, key.privateJwk);
     return { receipt, detail: { ev: ev ?? null, params: extra.params ?? null, result: extra.result ?? null, required: extra.required ?? null } };
   }
   const saveDecision = (action, decision, reason, rec) => db.run('INSERT INTO decisions (ts, action, decision, reason, detail, receipt) VALUES (?,?,?,?,?,?)', nowSec(), action, decision, reason, JSON.stringify(rec.detail), rec.receipt);
   const STATUS_FOR = { denied: 403, step_up: 403, deferred: 503 };
 
   // Wrap a protected action: verify, decide, record, answer.
-  function protectedRoute(action, handler) {
+  function protectedRoute(action, describe, handler) {
     return async (ctx) => {
+      const params = describe(ctx); // a malformed request is refused before anything else
+      const base = { params, action_digest: digestOf({ action, params }) };
       let verified = null;
       try {
         verified = await verifyPresentation(ctx);
-        return await handler(ctx, verified);
+        return await handler(ctx, verified, base);
       } catch (e) {
         if (!(e instanceof Decision)) throw e;
         const ev = e.extra.ev ?? verified?.ev ?? null;
+        e.extra = { ...base, ...e.extra };
         const rec = await record(action, e.decision, e.reason, ev, e.extra);
         saveDecision(action, e.decision, e.reason, rec);
         const { ev: _omit, ...publicExtra } = e.extra;
@@ -185,23 +202,30 @@ export async function createShop(cfg) {
   app.get('/api/challenge', () => { const nonce = randomId(18); db.run('INSERT INTO challenges (nonce, exp) VALUES (?,?)', nonce, nowSec() + 120); db.run('DELETE FROM challenges WHERE exp < ?', nowSec() - 600); return { nonce, expires_in: 120, audience: cfg.url }; });
 
   // Level 1: a valid accountable ID, nothing else.
-  app.post('/api/quotes', protectedRoute('shop.quote', async (ctx, v) => {
-    const it = item(ctx.body.sku); const qty = qtyOf(ctx.body); const p = policy();
-    const quote = { quote_id: 'q_' + randomId(6), sku: it.sku, item: it.name, qty, total: it.price * qty, currency: p.currency };
-    const rec = await record('shop.quote', 'granted', 'valid_id', v.ev, { params: { sku: it.sku, qty }, result: { quote_id: quote.quote_id } });
-    db.tx(() => { db.run('INSERT INTO quotes (id, ts, sku, qty, total, id_sub) VALUES (?,?,?,?,?,?)', quote.quote_id, nowSec(), it.sku, qty, quote.total, v.id.sub); saveDecision('shop.quote', 'granted', 'valid_id', rec); });
+  const orderParams = (ctx) => { const p = policy(); const it = item(ctx.body.sku); const qty = qtyOf(ctx.body); return { sku: it.sku, item: it.name, qty, total: it.price * qty, currency: p.currency }; };
+
+  // A read-only check: "is this ID good right now?" Writes nothing but the
+  // decision record. Used to show revocation without risking an order.
+  app.post('/api/check', protectedRoute('shop.check', () => ({}), async (ctx, v, base) => {
+    const rec = await record('shop.check', 'granted', 'valid_id', v.ev, base);
+    saveDecision('shop.check', 'granted', 'valid_id', rec);
+    return { decision: 'granted', receipt: rec.receipt };
+  }));
+
+  app.post('/api/quotes', protectedRoute('shop.quote', orderParams, async (ctx, v, base) => {
+    const quote = { quote_id: 'q_' + randomId(6), ...base.params };
+    const rec = await record('shop.quote', 'granted', 'valid_id', v.ev, { ...base, result: { quote_id: quote.quote_id } });
+    db.tx(() => { recheckAtCommit(v, []); db.run('INSERT INTO quotes (id, ts, sku, qty, total, id_sub) VALUES (?,?,?,?,?,?)', quote.quote_id, nowSec(), quote.sku, quote.qty, quote.total, v.id.sub); saveDecision('shop.quote', 'granted', 'valid_id', rec); });
     return { decision: 'granted', quote, receipt: rec.receipt };
   }));
 
   // Levels 2 and 3: an order needs an authorization that covers the amount and
   // how the principal was verified; above the threshold it also needs a fresh
   // human approval of exactly this order.
-  app.post('/api/orders', protectedRoute('shop.order', async (ctx, v) => {
-    const p = policy(); const it = item(ctx.body.sku); const qty = qtyOf(ctx.body);
-    const total = it.price * qty;
-    const params = { sku: it.sku, qty, total, currency: p.currency };
-    const actionDigest = digestOf({ action: 'shop.order', params });
-    const base = { params, action_digest: actionDigest };
+  app.post('/api/orders', protectedRoute('shop.order', orderParams, async (ctx, v, base) => {
+    const p = policy(); const params = base.params; const { total, qty } = params;
+    const it = { sku: params.sku, name: params.item };
+    const actionDigest = base.action_digest;
     const accepted = (type) => v.claims.find((c) => c.type === type && c.accepted);
     const offered = (type) => v.claims.filter((c) => c.type === type && !c.accepted).map((c) => c.reason);
 
@@ -222,7 +246,9 @@ export async function createShop(cfg) {
         if (approval && ticket && approval.value.grant_ref !== auth.value.grant_ref) throw new Decision('denied', 'approval_under_a_different_authorization', base);
         // Ask for approval of exactly this order. The request is signed by the
         // shop and carried by the agent; the shop contacts no one.
-        const jwt = await sign(TYP.ticket, { iss: cfg.url, aud: v.id.iss, iat: nowSec(), exp: nowSec() + 600, jti: randomId(), action: 'shop.order', params, amount: total, action_digest: actionDigest, summary: { Item: it.name, Quantity: qty, Total: `${p.currency} ${total.toFixed(2)}`, Shop: p.name } }, key.privateJwk);
+        // The ticket names the ID that asked, so only the agent that ID was
+        // issued to can take it to its directory.
+        const jwt = await sign(TYP.ticket, { iss: cfg.url, aud: v.id.iss, iat: nowSec(), exp: nowSec() + 600, jti: randomId(), for_id: v.id.sub, action: 'shop.order', params, action_digest: actionDigest }, key.privateJwk);
         db.run('INSERT INTO tickets (digest, jwt, action_digest, exp) VALUES (?,?,?,?)', sha256b64u(jwt), jwt, actionDigest, nowSec() + 600);
         throw new Decision('step_up', 'approval_required', { ...base, ticket: jwt, required: [{ type: 'approval', why: `orders above ${p.currency} ${p.approval_above} need the principal's approval of the exact order` }] });
       }
@@ -237,12 +263,13 @@ export async function createShop(cfg) {
     const out = db.tx(() => {
       const prior = idem && db.get('SELECT * FROM orders WHERE idem = ?', idem);
       if (prior) return { order_id: prior.id, receipt: prior.receipt, repeated: true };
+      recheckAtCommit(v, [auth, accepted('principal_verification'), ticketDigest ? accepted('approval') : null]);
       db.run('INSERT INTO orders (id, ts, sku, qty, total, currency, id_sub, approved, idem, receipt) VALUES (?,?,?,?,?,?,?,?,?,?)', orderId, nowSec(), it.sku, qty, total, p.currency, v.id.sub, ticketDigest ? 1 : 0, idem, rec.receipt);
       if (ticketDigest) db.run('UPDATE tickets SET order_id = ? WHERE digest = ?', orderId, ticketDigest);
       saveDecision('shop.order', 'granted', ticketDigest ? 'authorized_and_approved' : 'authorized', rec);
       return { order_id: orderId, receipt: rec.receipt, repeated: false };
     });
-    return { decision: 'granted', order: { order_id: out.order_id, ...params, item: it.name }, repeated: out.repeated, receipt: out.receipt };
+    return { decision: 'granted', order: { order_id: out.order_id, ...params }, repeated: out.repeated, receipt: out.receipt };
   }));
 
   // ---------- admin: reporting an incident ----------
@@ -254,7 +281,7 @@ export async function createShop(cfg) {
     const d = db.get('SELECT * FROM decisions WHERE seq = ?', Number(ctx.body.seq)) ?? fail(404, 'decision_not_found');
     if (d.case_ref) return { case_ref: d.case_ref };
     const { payload } = peek(d.receipt);
-    if (!payload.id || !trust.has(payload.id_issuer)) fail(409, 'no_accountable_id_in_this_decision');
+    if (!payload.id || !payload.holder_verified || !trust.has(payload.id_issuer)) fail(409, 'no_holder_verified_id_in_this_decision');
     // The affected party reports to the directory with its own signed receipt.
     const res = await fetch(`${payload.id_issuer}/api/incidents`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ receipt: d.receipt, note: String(ctx.body.note ?? '').slice(0, 500) }) }).catch(() => null);
     if (!res?.ok) fail(502, 'directory_did_not_accept_report', { detail: res ? await res.json().catch(() => ({})) : 'unreachable' });
@@ -296,14 +323,14 @@ export async function createShop(cfg) {
       if (ev.id && !(ev.claims ?? []).some((c) => c.type === 'principal_identity' && c.accepted)) notLearned.push("The principal's name, email or any other identity");
       if (ev.id) notLearned.push('Which agent software this is, or what else it has done elsewhere');
       if (ev.id && ev.id_mode !== 'pairwise') notLearned.push('Whether this is the same agent as any earlier visit');
-      return { seq: d.seq, ts: d.ts, action: d.action, decision: d.decision, reason: d.reason, id: ev.id ?? null, id_mode: ev.id_mode ?? null, issuer: ev.issuer ?? null, claims: (ev.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status_rev: ev.status?.rev ?? null, status_age: ev.status?.age ?? null, params: det.params, result: det.result, required: det.required, learned, not_learned: notLearned, receipt_ref: d.receipt ? sha256b64u(d.receipt).slice(0, 12) : null, case_ref: d.case_ref, can_report: admin && !!ev.id && !d.case_ref };
+      return { seq: d.seq, ts: d.ts, action: d.action, decision: d.decision, reason: d.reason, id: ev.id ?? null, id_mode: ev.id_mode ?? null, issuer: ev.issuer ?? null, claims: (ev.claims ?? []).map((c) => ({ type: c.type, attested_by: c.attested_by, accepted: c.accepted, reason: c.reason })), status_rev: ev.status?.rev ?? null, status_age: ev.status?.age ?? null, params: det.params, result: det.result, required: det.required, learned, not_learned: notLearned, receipt_ref: d.receipt ? sha256b64u(d.receipt).slice(0, 12) : null, case_ref: d.case_ref, can_report: admin && !!ev.id && ev.holder_verified === true && !d.case_ref };
     });
     base.orders = db.all('SELECT id, ts, sku, qty, total, currency, approved FROM orders ORDER BY ts DESC LIMIT 30');
     return base;
   }
   app.get('/api/view', (ctx) => view(ctx));
 
-  mountUi(app, { surface: 'shop', projectRoot: cfg.projectRoot, title: policy().name, mode: cfg.mode });
+  mountUi(app, { surface: 'shop', projectRoot: cfg.projectRoot, title: policy().name, mode: cfg.mode, origin });
 
   let server = null;
   return {

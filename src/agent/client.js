@@ -37,7 +37,7 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
     const raw = body === undefined ? '' : JSON.stringify(body);
     const auth = await sign(TYP.agentReq, { iss: iss ?? 'unregistered', aud: cfg.directory, htm: method, htu: p.split('?')[0], body_hash: sha256b64u(raw), iat: nowSec(), jti: randomId() }, key.privateJwk);
     let res;
-    try { res = await fetch(cfg.directory + p, { method, headers: { 'aaf-agent-auth': auth, ...(raw ? { 'content-type': 'application/json' } : {}) }, body: raw || undefined, signal: AbortSignal.timeout(10000) }); } catch { throw new AgentError('directory_unreachable', { directory: cfg.directory }); }
+    try { res = await fetch(cfg.directory + p, { method, redirect: 'error', headers: { 'aaf-agent-auth': auth, ...(raw ? { 'content-type': 'application/json' } : {}) }, body: raw || undefined, signal: AbortSignal.timeout(10000) }); } catch { throw new AgentError('directory_unreachable', { directory: cfg.directory }); }
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new AgentError(json.error ?? 'directory_error', { ...json, http_status: res.status });
     return json;
@@ -80,7 +80,7 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
       const cfg = config();
       if (!cfg.agent_id) return { registered: false, directory: cfg.directory, counterparties: cfg.counterparties };
       const me = await dir('GET', '/api/agent/me');
-      return { registered: true, directory: cfg.directory, counterparties: cfg.counterparties, ...me, pending_action: read('pending.json') ? 'yes: run aaf-agent continue' : 'none' };
+      return { registered: true, directory: cfg.directory, counterparties: cfg.counterparties, ...me, pending_actions: Object.values(read('pending.json', {})).map((x) => ({ approval_id: x.approval_id, review_at: x.review_url })) };
     },
 
     // Obtain an ID (and any claims) for one counterparty, bound to a fresh key.
@@ -98,11 +98,11 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
     // One signed request to a counterparty.
     async present({ method, url, body, creds, extraClaims = [], idempotencyKey }) {
       const o = allowed(url); const u = new URL(url);
-      const ch = await (await fetch(o + '/api/challenge', { signal: AbortSignal.timeout(10000) })).json();
+      const ch = await (await fetch(o + '/api/challenge', { redirect: 'error', signal: AbortSignal.timeout(10000) })).json();
       const raw = body === undefined ? '' : JSON.stringify(body);
       const claims = [...creds.claims, ...extraClaims];
       const proof = await sign(TYP.proof, { aud: o, htm: method, htu: u.pathname, body_hash: sha256b64u(raw), creds_hash: sha256b64u([creds.id, ...claims].join('.')), nonce: ch.nonce, iat: nowSec(), jti: randomId() }, creds.key);
-      const res = await fetch(url, { method, headers: { 'aaf-presentation': b64u(JSON.stringify({ id: creds.id, claims, proof })), ...(raw ? { 'content-type': 'application/json' } : {}), ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}) }, body: raw || undefined, signal: AbortSignal.timeout(15000) });
+      const res = await fetch(url, { method, redirect: 'error', headers: { 'aaf-presentation': b64u(JSON.stringify({ id: creds.id, claims, proof })), ...(raw ? { 'content-type': 'application/json' } : {}), ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}) }, body: raw || undefined, signal: AbortSignal.timeout(15000) });
       return { http_status: res.status, ...(await res.json().catch(() => ({}))) };
     },
 
@@ -113,8 +113,16 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
     },
 
     // Do one thing at a counterparty, following its requests for more.
-    async act({ method = 'POST', url, body, mode = 'ephemeral', wait = 45, useCached = false, approvalId = null, want = [] }) {
+    async act({ method = 'POST', url, body, mode = 'ephemeral', wait = 45, useCached = false, approvalId = null, want = [], requestKey = null }) {
       const aud = allowed(url);
+      // One key per intended write. If the answer is lost and the same request
+      // is made again, the same key is sent, so the counterparty writes once.
+      const sig = sha256b64u(JSON.stringify([method, url, body]));
+      const open_ = read('open-request.json');
+      requestKey ??= open_?.sig === sig && open_.at > nowSec() - 900 ? open_.key : randomId();
+      write('open-request.json', { sig, key: requestKey, at: nowSec() });
+      const pendings = () => read('pending.json', {});
+      const dropPending = (id) => { const p = pendings(); delete p[id]; write('pending.json', p); };
       const disclosed = (creds) => ({ id: `${creds.sub} (${mode === 'pairwise' ? 'stable for this service' : 'single-use'})`, claims: creds.claims.map((c) => peek(c).payload.claim.type), withheld_by_policy: creds.withheld ?? [] });
       for (let round = 0; round < 5; round++) {
         let creds;
@@ -126,16 +134,17 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
             if (e.code === 'registration_revoked') {
               // The directory will not issue. Show what the counterparty says to
               // the last credentials this agent still holds.
+              // Read-only check only: never retry a write with old credentials.
               const cached = read('last-credentials.json');
-              const shop = cached && cached.aud === aud ? await this.present({ method, url, body, creds: cached }) : null;
-              return { status: 'refused', reason: 'registration_revoked', directory: 'refused to issue a new ID: this agent\'s registration is revoked', counterparty: shop ? { decision: shop.decision, reason: shop.error, note: 'answer to the last credentials still held' } : null };
+              const shop = cached && cached.aud === aud ? await this.present({ method: 'POST', url: aud + '/api/check', body: {}, creds: cached }) : null;
+              return { status: 'refused', reason: 'registration_revoked', directory: 'refused to issue a new ID: this agent\'s registration is revoked', counterparty: shop ? { decision: shop.decision, reason: shop.error ?? 'still_accepted_until_status_refreshes', note: 'read-only check of the last credentials still held' } : null };
             }
             throw e;
           }
         }
-        const res = await this.present({ method, url, body, creds });
+        const res = await this.present({ method, url, body, creds, idempotencyKey: requestKey });
         const base = { disclosed: disclosed(creds), receipt: res.receipt };
-        if (res.http_status === 200) { remove('pending.json'); return { status: 'done', result: res.quote ?? res.order ?? res, repeated: res.repeated, ...base }; }
+        if (res.http_status === 200) { remove('open-request.json'); if (approvalId) dropPending(approvalId); return { status: 'done', result: res.quote ?? res.order ?? res, repeated: res.repeated, ...base }; }
         if (useCached) return { status: 'refused', reason: res.error, decision: res.decision, required: res.required, ...base };
         if (res.error === 'claim_required' || res.error === 'presentation_required') {
           const next = (res.required ?? []).filter((r) => ['authorization', 'principal_verification', 'principal_identity'].includes(r.type)).map((r) => ({ type: r.type, action: r.action }));
@@ -152,14 +161,14 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
         }
         if (res.error === 'approval_required') {
           const ap = await dir('POST', '/api/approvals', { ticket: res.ticket });
-          write('pending.json', { method, url, body, mode, want, approval_id: ap.approval_id, review_url: ap.review_url });
+          write('pending.json', { ...pendings(), [ap.approval_id]: { method, url, body, mode, want, requestKey, approval_id: ap.approval_id, review_url: ap.review_url, at: nowSec() } });
           open(ap.review_url);
           const deadline = Date.now() + wait * 1000;
           let st = ap.status;
           while (st === 'pending' && Date.now() < deadline) { await sleep(1500); st = (await dir('GET', `/api/approvals/${ap.approval_id}`)).status; }
           if (st === 'approved') { approvalId = ap.approval_id; continue; }
           if (st === 'pending') return { status: 'approval_pending', reason: 'The service needs the user to approve this exact action with their passkey.', review_at: ap.review_url, next: 'Ask the user to review and approve in the browser, then run: aaf-agent continue', ...base };
-          remove('pending.json');
+          dropPending(ap.approval_id);
           return { status: 'refused', reason: 'approval_' + st, ...base };
         }
         return { status: 'refused', reason: res.error, decision: res.decision, required: res.required, ...base };
@@ -168,15 +177,17 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
     },
 
     // Resume after the user says they approved.
-    async continue({ wait = 5 } = {}) {
-      const p = read('pending.json');
+    async continue({ wait = 5, approvalId } = {}) {
+      const all = Object.values(read('pending.json', {})).sort((a, b) => b.at - a.at);
+      const p = approvalId ? all.find((x) => x.approval_id === approvalId) : all[0];
       if (!p) return { status: 'nothing_pending' };
+      const dropPending = (id) => { const m = read('pending.json', {}); delete m[id]; write('pending.json', m); };
       const deadline = Date.now() + wait * 1000;
       let st;
       for (;;) { st = (await dir('GET', `/api/approvals/${p.approval_id}`)).status; if (st !== 'pending' || Date.now() >= deadline) break; await sleep(1500); }
       if (st === 'pending') return { status: 'approval_pending', review_at: p.review_url, next: 'The user has not approved yet.' };
-      if (st !== 'approved') { remove('pending.json'); return { status: 'refused', reason: 'approval_' + st }; }
-      return this.act({ method: p.method, url: p.url, body: p.body, mode: p.mode, want: p.want, approvalId: p.approval_id, wait: 0 });
+      if (st !== 'approved') { dropPending(p.approval_id); return { status: 'refused', reason: 'approval_' + st }; }
+      return this.act({ method: p.method, url: p.url, body: p.body, mode: p.mode, want: p.want, approvalId: p.approval_id, requestKey: p.requestKey, wait: 0 });
     },
 
     async catalog(shopUrl) { const o = allowed(shopUrl); return (await fetch(o + '/api/catalog')).json(); },

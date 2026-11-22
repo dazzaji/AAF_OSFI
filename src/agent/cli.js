@@ -14,7 +14,7 @@ const HELP = `aaf-agent: hold an Accountable Agent ID and use it at a counterpar
   aaf-agent quote <sku> [--qty N]                    needs only an ID
   aaf-agent order <sku> [--qty N]                    needs an authorization; large orders need approval
   aaf-agent continue                                 resume after the user approved in the browser
-  aaf-agent recheck                                  re-present the last credentials (shows revocation)
+  aaf-agent recheck                                  read-only: is the last ID this agent holds still accepted?
 
 Options: --pairwise (same ID at this shop every time)  --wait <seconds>  --no-browser
 Keys and settings live in ~/.aaf-agent (or $AAF_AGENT_HOME). This tool holds the
@@ -46,7 +46,7 @@ export async function run(argv) {
     case 'quote': if (!pos[1]) throw new AgentError('usage', { usage: 'aaf-agent quote <sku> [--qty N]' }); return agent.act({ url: agent.shop() + '/api/quotes', body: { sku: pos[1], qty }, mode, wait: wait ?? 45 });
     case 'order': if (!pos[1]) throw new AgentError('usage', { usage: 'aaf-agent order <sku> [--qty N]' }); return agent.act({ url: agent.shop() + '/api/orders', body: { sku: pos[1], qty }, mode, wait: wait ?? 45 });
     case 'continue': return agent.continue({ wait: wait ?? 5 });
-    case 'recheck': return agent.act({ url: agent.shop() + '/api/quotes', body: { sku: pos[1] ?? 'cards-500', qty: 1 }, useCached: true });
+    case 'recheck': return agent.act({ url: agent.shop() + '/api/check', body: {}, useCached: true });
     default: throw new AgentError('unknown_command', { command: cmd, hint: 'aaf-agent help' });
   }
 }
