@@ -10,7 +10,7 @@ import { TYP, loadOrCreateKey, sign, signSync, verify, peek } from '../core/toke
 import { sha256b64u, randomId, nowSec, digestOf, unb64u, fail, HttpError } from '../core/util.js';
 import { decodeList, getBit } from '../core/statuslist.js';
 import { mountUi } from '../ui/mount.js';
-import { safeFetch, schemeAllowed, isLocalhost } from '../core/net.js';
+import { safeFetch, schemeAllowed, isLocalhost, parseRoutes } from '../core/net.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS challenges (nonce TEXT PRIMARY KEY, exp INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
@@ -55,6 +55,7 @@ const deny = (reason, extra) => { throw new Decision('denied', reason, extra); }
 export async function createShop(cfg) {
   // A hosted shop must be told its public HTTPS address and which directories
   // it trusts. Localhost is accepted only on a staging run.
+  parseRoutes(cfg.internalRoutes); // a malformed route stops start-up
   if (cfg.mode !== 'local') {
     if (!schemeAllowed(cfg.url, cfg)) throw new Error('AAF_SHOP_URL must be an https address on a hosted build');
     if (!cfg.trusted.length) throw new Error('AAF_TRUSTED_DIRECTORIES must be set on a hosted build');

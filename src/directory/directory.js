@@ -14,7 +14,7 @@ import { b64u, unb64u, sha256, sha256b64u, randomId, nowSec, canonical, digestOf
 import { emptyList, setBit, encodeList, randomFreeIndex } from '../core/statuslist.js';
 import { mountUi } from '../ui/mount.js';
 import { createTransport, mailMode, readKeyFile } from './mailer.js';
-import { safeFetch, schemeAllowed, originList, isLocalhost } from '../core/net.js';
+import { safeFetch, schemeAllowed, originList, isLocalhost, parseRoutes } from '../core/net.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, identity_type TEXT NOT NULL, identity_value TEXT NOT NULL, method TEXT NOT NULL, assurance TEXT NOT NULL, is_operator INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, UNIQUE(identity_type, identity_value));
@@ -75,6 +75,7 @@ export function directoryConfig(env = process.env) {
 export async function createDirectory(cfg, { mailFetch } = {}) {
   // A hosted directory must be told its public HTTPS address and which
   // counterparties it serves. Localhost is accepted only on a staging run.
+  parseRoutes(cfg.internalRoutes); // a malformed route stops start-up
   if (cfg.mode !== 'local') {
     if (!schemeAllowed(cfg.url, cfg)) throw new Error('AAF_DIRECTORY_URL must be an https address on a hosted build');
     if (!cfg.trustedCounterparties?.length) throw new Error('AAF_TRUSTED_COUNTERPARTIES must be set on a hosted build');

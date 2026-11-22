@@ -19,9 +19,26 @@ export function schemeAllowed(url, { mode = 'local', staging = false } = {}) {
 // Only the connection is redirected. Which origins are allowed, and every
 // issuer and audience check, still use the public address; signatures do the
 // authenticating, so the private hop needs no TLS of its own.
+export function parseRoutes(routes) {
+  const out = [];
+  for (const pair of String(routes ?? '').split(',').map((x) => x.trim()).filter(Boolean)) {
+    const i = pair.indexOf('=');
+    if (i < 0) throw new Error('AAF_INTERNAL_ROUTES entries must look like https://public=http://internal:port');
+    const from = new URL(pair.slice(0, i).trim()); const to = new URL(pair.slice(i + 1).trim());
+    if (!['http:', 'https:'].includes(to.protocol) || to.pathname !== '/' || to.search || from.pathname !== '/' || from.search) throw new Error('AAF_INTERNAL_ROUTES entries must be plain origins');
+    out.push({ from: from.origin, to: to.origin });
+  }
+  return out;
+}
+// The path and query are assigned to a URL already fixed at the private
+// target, never resolved against it, so no path (for example one starting
+// with "//") can change the host. The result is checked all the same.
 function routed(u, routes) {
-  for (const pair of String(routes ?? '').split(',')) { const i = pair.indexOf('='); if (i < 0) continue; const from = pair.slice(0, i).trim().replace(/\/$/, ''); const to = pair.slice(i + 1).trim().replace(/\/$/, ''); if (from && to && u.origin === new URL(from).origin) return new URL(u.pathname + u.search, to); }
-  return u;
+  const hit = parseRoutes(routes).find((x) => x.from === u.origin);
+  if (!hit) return u;
+  const t = new URL(hit.to); t.pathname = u.pathname; t.search = u.search;
+  if (t.origin !== hit.to) throw new HttpError(400, 'route_escaped');
+  return t;
 }
 
 export async function safeFetch(url, { allow = null, mode = 'local', staging = false, routes = '', method = 'GET', headers, body, timeout = 4000, maxBytes = 256 * 1024 } = {}) {
