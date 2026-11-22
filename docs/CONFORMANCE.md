@@ -2,7 +2,7 @@
 
 **This is a self-assessment of a pilot, not a certification.** "Demonstrated" means a mechanism exists in the code and an automated scenario exercises it. It does not mean independently audited or fit for production. Human approval in the automated scenarios is simulated by a software authenticator; only a person's own passkey runs count as a human test.
 
-Scenario numbers refer to the end-to-end scenarios (94 checks in the last run), plus a browser run of the same pages with a virtual passkey (17 checks).
+Scenario numbers refer to the end-to-end scenarios (97 checks in the last run), plus a browser run of the same pages with a virtual passkey and a deliberately hostile design (19 checks).
 
 ## Mandatory rows (19)
 

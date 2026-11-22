@@ -65,7 +65,7 @@ export function mountUi(app, { surface, projectRoot, title, mode, origin }) {
   // frame page directly in a tab. Scripts load only from this service (styling
   // is served locally, not from a CDN) and connect-src is 'none', so a skin has
   // no way to send the display data to another host.
-  const FRAME_CSP = `sandbox allow-scripts; default-src 'none'; script-src ${origin}; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'`;
+  const FRAME_CSP = `sandbox allow-scripts; default-src 'none'; script-src ${origin}; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; webrtc 'block'; base-uri 'none'; form-action 'none'`;
 
   app.get('/', (ctx) => send(ctx.res, 200, Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title.replace(/[<&]/g, '')}</title><link rel="stylesheet" href="/ui/shell.css"></head><body data-surface="${surface}" data-mode="${mode}" data-title="${title.replace(/["<&]/g, '')}"><div id="app"></div><script type="module" src="/ui/shell.js"></script></body></html>`), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': SHELL_CSP, 'referrer-policy': 'no-referrer', 'cross-origin-opener-policy': 'same-origin', 'x-content-type-options': 'nosniff' }));
   app.get('/ui/shell.js', (ctx) => serveFile(ctx.res, path.join(here, 'shell.js')));

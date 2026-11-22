@@ -104,7 +104,7 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
       const ch = await (await fetch(o + '/api/challenge', { redirect: 'error', signal: AbortSignal.timeout(10000) })).json();
       const raw = body === undefined ? '' : JSON.stringify(body);
       const claims = [...creds.claims, ...extraClaims];
-      const proof = await sign(TYP.proof, { aud: o, htm: method, htu: u.pathname, body_hash: sha256b64u(raw), creds_hash: sha256b64u([creds.id, ...claims].join('.')), nonce: ch.nonce, op: idempotencyKey ?? undefined, iat: nowSec(), jti: randomId() }, creds.key);
+      const proof = await sign(TYP.proof, { aud: o, htm: method, htu: u.pathname + u.search, body_hash: sha256b64u(raw), creds_hash: sha256b64u([creds.id, ...claims].join('.')), nonce: ch.nonce, op: idempotencyKey ?? undefined, iat: nowSec(), jti: randomId() }, creds.key);
       const res = await fetch(url, { method, redirect: 'error', headers: { 'aaf-presentation': b64u(JSON.stringify({ id: creds.id, claims, proof })), ...(raw ? { 'content-type': 'application/json' } : {}) }, body: raw || undefined, signal: AbortSignal.timeout(15000) });
       return { http_status: res.status, ...(await res.json().catch(() => ({}))) };
     },
@@ -120,11 +120,13 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
       const aud = allowed(url);
       // One operation ID per intended write, kept in its own file until the
       // answer is actually received. If the answer is lost and the same request
-      // is made again within 15 minutes, the same ID is sent and the
-      // counterparty writes once. The ID is signed into every proof.
+      // is made again, the same ID is sent and the counterparty writes once.
+      // The ID is signed into every proof.
       const opFile = `op-${sha256b64u(JSON.stringify([method, url, body])).slice(0, 24)}.json`;
       if (!requestKey) {
-        const stale = read(opFile); if (fresh || (stale && stale.at <= nowSec() - 900)) remove(opFile);
+        // An unresolved operation is kept until it is answered or the user
+        // explicitly starts a new one (--new). It does not time out.
+        if (fresh) remove(opFile);
         // Reserved atomically: if two processes start the same request at
         // once, exactly one creates the file and both use its ID.
         fs.mkdirSync(home, { recursive: true, mode: 0o700 });

@@ -48,22 +48,30 @@ function say(text, kind = 'info') { toast.textContent = text; toast.className = 
 // ---------- trusted dialogs ----------
 // Everything a person approves is shown here, by the shell, from the server's
 // own description of the operation. Skin code never draws this.
+// Each flow (one request from a design, or one deep link) has a number. Work
+// that finishes after another flow has started is discarded and draws nothing.
+let flow = 0;
 function modal(title, body, buttons) {
   modalHost.replaceChildren(el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' }, el('div', { class: 'modal-tag' }, 'Trusted screen · ' + location.host), el('h2', {}, title), body, el('div', { class: 'modal-buttons' }, buttons)));
   modalHost.hidden = false;
 }
-const closeModal = () => { modalHost.hidden = true; modalHost.replaceChildren(); };
+const closeModal = () => { modalHost.hidden = true; modalHost.replaceChildren(); state.dialogReserved = false; };
 const details = (display) => el('div', {}, el('table', { class: 'kv' }, display.lines.map(([k, v]) => el('tr', {}, el('th', {}, k), el('td', {}, v)))), display.warning ? el('p', { class: 'warn' }, display.warning) : null);
 
 // One privileged operation: the server describes it, the person reads that
 // description here, and a passkey assertion bound to it is the only way through.
 async function confirmOp(op, args, { onDone, declineLabel, onDecline } = {}) {
+  const mine = flow;
+  state.dialogReserved = true; // held while the server prepares the description
   let started;
-  try { started = await api('POST', '/api/confirm/start', { op, args }); } catch (e) { if (e.code === 'sign_in_required') { await signIn(); return confirmOp(op, args, { onDone, declineLabel, onDecline }); } say(explain(e), 'error'); return; }
+  try { started = await api('POST', '/api/confirm/start', { op, args }); } catch (e) { if (mine === flow) { state.dialogReserved = false; say(explain(e), 'error'); } return; }
+  if (mine !== flow) return; // another flow started meanwhile; never replace its screen
   const go = el('button', { class: 'btn primary', onclick: async () => {
     go.disabled = true; go.textContent = 'Waiting for your passkey…';
+    const shown = modalHost.firstChild; // the screen the person is confirming
     try {
       const response = await startAuthentication({ optionsJSON: started.options });
+      if (modalHost.firstChild !== shown) throw Object.assign(new Error('screen_changed'), { code: 'screen_changed' }); // never finish for a screen that is no longer the one shown
       const out = await api('POST', '/api/confirm/finish', { ceremony_id: started.ceremony_id, response });
       closeModal(); say('Done.', 'ok'); await refreshData(true); onDone?.(out);
     } catch (e) { go.disabled = false; go.textContent = 'Confirm with passkey'; say(explain(e), 'error'); }
@@ -79,7 +87,13 @@ function formModal(title, intro, fields, submitLabel, onSubmit) {
     inputs[f.name] = input;
     return el('label', { class: f.type === 'checkbox' ? 'field check' : 'field' }, f.type === 'checkbox' ? [input, ' ' + f.label] : [f.label, input]);
   }));
-  modal(title, body, [el('button', { class: 'btn', onclick: closeModal }, 'Cancel'), el('button', { class: 'btn primary', onclick: () => { const v = {}; for (const f of fields) v[f.name] = f.type === 'checkbox' ? inputs[f.name].checked : inputs[f.name].value.trim(); closeModal(); onSubmit(v); } }, submitLabel)]);
+  modal(title, body, [el('button', { class: 'btn', onclick: closeModal }, 'Cancel'), el('button', { class: 'btn primary', onclick: () => {
+    const v = {}; for (const f of fields) v[f.name] = f.type === 'checkbox' ? inputs[f.name].checked : inputs[f.name].value.trim();
+    // Moving from the form to its confirmation keeps the dialog reserved, so
+    // nothing else can slip in between the two screens.
+    closeModal(); state.dialogReserved = true;
+    Promise.resolve(onSubmit(v)).finally(() => { if (modalHost.hidden) state.dialogReserved = false; });
+  } }, submitLabel)]);
 }
 
 // ---------- sign in, enroll ----------
@@ -111,7 +125,7 @@ async function enroll(token) {
 // Browsers want a click before a passkey prompt, so arriving by link while
 // signed out shows a button first.
 function withSignIn(next) {
-  if (state.view?.viewer?.role !== 'public') return next();
+  if (state.view?.viewer?.role !== 'public') return next(); // returns the pending work, so the dialog stays reserved until it is shown
   const go = el('button', { class: 'btn primary', onclick: async () => { go.disabled = true; if (await signIn()) { closeModal(); next(); } else go.disabled = false; } }, 'Sign in with passkey');
   modal('Sign in to continue', el('p', {}, 'Sign in with your passkey to continue.'), [el('button', { class: 'btn', onclick: closeModal }, 'Not now'), go]);
 }
@@ -127,6 +141,7 @@ const DIRECTORY_ACTIONS = {
   declineApproval: (id) => askShell('Decline this request?', 'The agent will be told you said no. Nothing will be done.', 'Decline', () => doDecline(id)),
   grant: (agentId) => formModal('Set an authorization', 'You will confirm the exact terms on the next screen.', [{ name: 'action', label: 'Action', value: 'shop.order' }, { name: 'max_amount', label: 'Limit per action (USD)', type: 'number', value: '100' }, { name: 'days', label: 'Lasts (days)', type: 'number', value: '30' }], 'Continue', (v) => confirmOp('grant_create', { agent_id: String(agentId), action: v.action, max_amount: Number(v.max_amount), days: Number(v.days) })),
   revokeGrant: (id) => confirmOp('grant_revoke', { grant_id: String(id) }),
+  revokeApproval: (id) => confirmOp('approval_revoke', { approval_id: String(id) }),
   revokeAgent: (id) => confirmOp('agent_revoke', { agent_id: String(id) }),
   operatorRevokeAgent: (id) => confirmOp('agent_revoke', { agent_id: String(id), as_operator: true }),
   setPolicy: (agentId) => { const a = state.view?.principal?.agents?.find((x) => x.id === agentId); formModal('What may this agent disclose?', null, [{ name: 'share_verification', label: 'Share how I was verified when a service asks', type: 'checkbox', value: a?.policy?.share_verification !== false }, { name: 'share_identity_with', label: 'Share my verified email only with these services (one address per line, leave empty for never)', type: 'textarea', value: (a?.policy?.share_identity_with ?? []).join('\n') }], 'Continue', (v) => confirmOp('policy_set', { agent_id: String(agentId), policy: { share_verification: v.share_verification, share_identity_with: v.share_identity_with.split(/\s+/).filter(Boolean) } })); },
@@ -134,12 +149,18 @@ const DIRECTORY_ACTIONS = {
   releaseCase: (id) => formModal('Release identity for a case', 'SIMULATED authority request. Record the basis for this release. You will confirm on the next screen.', [{ name: 'basis', label: 'Basis', type: 'textarea', placeholder: 'e.g. Simulated lawful request 2026-PILOT-1 covering this receipt' }], 'Continue', (v) => confirmOp('case_release', { case_id: String(id), basis: v.basis })),
 };
 const SHOP_ACTIONS = {
-  reportIncident: (seq) => formModal('Report an incident to the directory', 'The shop sends its signed receipt for this decision to the directory that issued the ID. The shop gets a case reference back, not an identity.', [{ name: 'note', label: 'What happened', type: 'textarea', placeholder: 'e.g. Order placed and then disputed' }], 'Send report', async (v) => { try { const out = await api('POST', '/api/admin/incidents', { seq: Number(seq), note: v.note }); say(`Reported. Case reference ${out.case_ref}.`, 'ok'); refreshData(true); } catch (e) { say(explain(e), 'error'); } }),
+  reportIncident: async (seq) => {
+    // The decision is looked up by the shell itself and shown here, so a
+    // design cannot show one decision and report another.
+    const d = (await api('GET', '/api/view')).decisions?.find((x) => x.seq === Number(seq));
+    if (!d || !d.can_report) { say('That decision cannot be reported.', 'error'); return; }
+    formModal('Report an incident to the directory', `You are reporting decision #${d.seq}: ${d.action}${d.params?.sku ? ` · ${d.params.sku} × ${d.params.qty} · ${d.params.currency ?? ''} ${d.params.total ?? ''}` : ''} · ${d.decision} at ${new Date(d.ts * 1000).toLocaleString()} · ID ${String(d.id).slice(0, 14)}… · receipt ${d.receipt_ref}. The shop sends its signed receipt for this decision to the directory that issued the ID, and gets a case reference back, not an identity. The principal is notified.`, [{ name: 'note', label: 'What happened', type: 'textarea', placeholder: 'e.g. Order placed and then disputed' }], 'Send report', async (v) => { try { const out = await api('POST', '/api/admin/incidents', { seq: Number(seq), note: v.note }); say(`Reported. Case reference ${out.case_ref}.`, 'ok'); refreshData(true); } catch (e) { say(explain(e), 'error'); } });
+  },
   adminSignIn: () => formModal('Shop administrator', null, [{ name: 'token', label: 'Admin token', type: 'password' }], 'Sign in', async (v) => { try { await api('POST', '/api/admin/signin', { token: v.token }); refreshData(true); } catch (e) { say(explain(e), 'error'); } }),
 };
 const ACTIONS = SURFACE === 'directory' ? DIRECTORY_ACTIONS : SHOP_ACTIONS;
 
-function reviewPairing(id) { withSignIn(() => showPairing(id)); }
+function reviewPairing(id) { return withSignIn(() => showPairing(id)); }
 async function showPairing(id) {
   const p = (await api('GET', `/api/view?pair=${encodeURIComponent(id)}`)).principal?.pending_pairings?.[0];
   if (!p) { say('This registration request has expired or was already decided.', 'error'); return; }
@@ -150,7 +171,7 @@ async function showPairing(id) {
   ], 'Continue', (v) => confirmOp('pair_approve', { pairing_id: id, grant: v.grant ? { action: 'shop.order', max_amount: Number(v.max_amount), days: 30 } : null, policy: { share_verification: v.share_verification, share_identity_with: [] } }, { onDone: () => history.replaceState(null, '', location.pathname) }));
 }
 function reviewApproval(id) {
-  withSignIn(() => confirmOp('approval_approve', { approval_id: id }, { declineLabel: 'Decline', onDecline: () => doDecline(id), onDone: () => { history.replaceState(null, '', location.pathname); modal('Approved', el('p', {}, 'Go back to your agent and tell it to continue.'), [el('button', { class: 'btn primary', onclick: closeModal }, 'Close')]); } }));
+  return withSignIn(() => confirmOp('approval_approve', { approval_id: id }, { declineLabel: 'Decline', onDecline: () => doDecline(id), onDone: () => { history.replaceState(null, '', location.pathname); modal('Approved', el('p', {}, 'Go back to your agent and tell it to continue.'), [el('button', { class: 'btn primary', onclick: closeModal }, 'Close')]); } }));
 }
 
 // ---------- the sandboxed frame ----------
@@ -169,9 +190,11 @@ window.addEventListener('message', (e) => {
   // A trusted screen that is open, or about to open, is never replaced or
   // dismissed by a skin. The slot is taken before any network call is made.
   if (!modalHost.hidden || state.dialogReserved) return;
-  state.dialogReserved = true;
+  state.dialogReserved = true; flow++;
   const args = Array.isArray(m.args) ? m.args.slice(0, 1).map((a) => (typeof a === 'string' || typeof a === 'number' ? a : undefined)) : [];
-  Promise.resolve().then(() => fn(...args)).catch((err) => say(explain(err), 'error')).finally(() => { state.dialogReserved = false; });
+  // Held from the request until the trusted screen it leads to is dismissed.
+  // It is released early only if the request ended without showing one.
+  Promise.resolve().then(() => fn(...args)).catch((err) => say(explain(err), 'error')).finally(() => { if (modalHost.hidden) state.dialogReserved = false; });
 });
 function pushProps() {
   if (!state.frameReady) return;
@@ -235,6 +258,7 @@ await refreshData(true);
 setInterval(refreshCatalog, 3000);
 setInterval(() => refreshData(false), 2000);
 if (SURFACE === 'directory') {
+  flow++;
   if (params.get('invite')) enroll(params.get('invite'));
   else if (params.get('pair')) reviewPairing(params.get('pair'));
   else if (params.get('approval')) reviewApproval(params.get('approval'));

@@ -15,7 +15,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS challenges (nonce TEXT PRIMARY KEY, exp INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS tickets (digest TEXT PRIMARY KEY, jwt TEXT NOT NULL, action_digest TEXT NOT NULL, exp INTEGER NOT NULL, order_id TEXT);
 CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, sku TEXT NOT NULL, qty INTEGER NOT NULL, total REAL NOT NULL, currency TEXT NOT NULL, id_sub TEXT NOT NULL, approved INTEGER NOT NULL, idem TEXT UNIQUE, receipt TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS quotes (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, sku TEXT NOT NULL, qty INTEGER NOT NULL, total REAL NOT NULL, id_sub TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS quotes (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, sku TEXT NOT NULL, qty INTEGER NOT NULL, total REAL NOT NULL, id_sub TEXT NOT NULL, idem TEXT UNIQUE, response TEXT);
 CREATE TABLE IF NOT EXISTS watermarks (issuer TEXT PRIMARY KEY, rev INTEGER NOT NULL, iat INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS decisions (seq INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, decision TEXT NOT NULL, reason TEXT NOT NULL, detail TEXT NOT NULL, receipt TEXT, case_ref TEXT);
 `;
@@ -73,7 +73,7 @@ export async function createShop(cfg) {
       // Never step back to an older revision or an older snapshot, including
       // across a restart of this shop: the highest revision seen is kept on disk.
       const mark = db.get('SELECT rev, iat FROM watermarks WHERE issuer = ?', t.issuer);
-      if ((t.status && (payload.rev < t.status.rev || payload.iat < t.status.iat)) || (mark && payload.rev < mark.rev)) throw new Error('stale status list offered');
+      if ((t.status && (payload.rev < t.status.rev || payload.iat < t.status.iat)) || (mark && (payload.rev < mark.rev || payload.iat < mark.iat))) throw new Error('stale status list offered');
       t.status = { rev: payload.rev, iat: payload.iat, bits: decodeList(payload.status_list.lst) };
       db.run('INSERT INTO watermarks (issuer, rev, iat) VALUES (?,?,?) ON CONFLICT(issuer) DO UPDATE SET rev = excluded.rev, iat = excluded.iat', t.issuer, payload.rev, payload.iat);
       t.lastError = null;
@@ -111,7 +111,7 @@ export async function createShop(cfg) {
     // issued that can be used once.
     let proof; try { proof = (await verify(pres.proof, id.cnf.jwk, TYP.proof)).payload; } catch { throw new Decision('denied', 'holder_binding_failed', { ev }); }
     const credsHash = sha256b64u([pres.id, ...pres.claims].join('.'));
-    if (proof.aud !== cfg.url || proof.htm !== ctx.req.method || proof.htu !== ctx.path) throw new Decision('denied', 'proof_wrong_target', { ev });
+    if (proof.aud !== cfg.url || proof.htm !== ctx.req.method || proof.htu !== ctx.path + ctx.url.search) throw new Decision('denied', 'proof_wrong_target', { ev });
     if (proof.body_hash !== sha256b64u(ctx.rawBody ?? '')) throw new Decision('denied', 'proof_body_mismatch', { ev });
     if (proof.creds_hash !== credsHash) throw new Decision('denied', 'proof_credentials_mismatch', { ev });
     if (Math.abs(now - proof.iat) > 60) throw new Decision('denied', 'proof_stale', { ev });
@@ -223,9 +223,19 @@ export async function createShop(cfg) {
   }));
 
   app.post('/api/quotes', protectedRoute('shop.quote', orderParams, async (ctx, v, base) => {
+    const idem = v.ev.op ? 'op:' + v.ev.op : null;
     const quote = { quote_id: 'q_' + randomId(6), ...base.params };
-    const rec = db.tx(() => { recheckAtCommit(v, []); const r = record('shop.quote', 'granted', 'valid_id', v.ev, { ...base, result: { quote_id: quote.quote_id } }); db.run('INSERT INTO quotes (id, ts, sku, qty, total, id_sub) VALUES (?,?,?,?,?,?)', quote.quote_id, nowSec(), quote.sku, quote.qty, quote.total, v.id.sub); saveDecision('shop.quote', 'granted', 'valid_id', r); return r; });
-    return { decision: 'granted', quote, receipt: rec.receipt };
+    return db.tx(() => {
+      // A repeated operation gets the answer that was stored the first time.
+      const prior = idem && db.get('SELECT * FROM quotes WHERE idem = ?', idem);
+      if (prior) { if (prior.sku !== quote.sku || prior.qty !== quote.qty) throw new Decision('denied', 'operation_id_reused_for_a_different_order'); return { ...JSON.parse(prior.response), repeated: true }; }
+      recheckAtCommit(v, []);
+      const r = record('shop.quote', 'granted', 'valid_id', v.ev, { ...base, result: { quote_id: quote.quote_id } });
+      const response = { decision: 'granted', quote, receipt: r.receipt };
+      db.run('INSERT INTO quotes (id, ts, sku, qty, total, id_sub, idem, response) VALUES (?,?,?,?,?,?,?,?)', quote.quote_id, nowSec(), quote.sku, quote.qty, quote.total, v.id.sub, idem, JSON.stringify(response));
+      saveDecision('shop.quote', 'granted', 'valid_id', r);
+      return response;
+    });
   }));
 
   // Levels 2 and 3: an order needs an authorization that covers the amount and
@@ -235,6 +245,13 @@ export async function createShop(cfg) {
     const p = policy(); const params = base.params; const { total, qty } = params;
     const it = { sku: params.sku, name: params.item };
     const actionDigest = base.action_digest;
+    // A retry of an operation that already committed is answered from what was
+    // stored then, before today's prices, thresholds or approvals are looked at.
+    if (v.ev.op) {
+      const done = db.get('SELECT * FROM orders WHERE idem = ?', 'op:' + v.ev.op);
+      if (done && (done.sku !== params.sku || done.qty !== params.qty)) throw new Decision('denied', 'operation_id_reused_for_a_different_order');
+      if (done) return { decision: 'granted', order: { order_id: done.id, sku: done.sku, item: params.item, qty: done.qty, total: done.total, currency: done.currency }, repeated: true, receipt: done.receipt };
+    }
     const accepted = (type) => v.claims.find((c) => c.type === type && c.accepted);
     const offered = (type) => v.claims.filter((c) => c.type === type && !c.accepted).map((c) => c.reason);
 

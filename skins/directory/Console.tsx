@@ -102,6 +102,14 @@ export default function Console({ data, viewer, source, actions }: SkinProps<Dir
         </Card>
       )}
 
+      {p && p.recent_approvals.length > 0 && (
+        <Card title="Your recent decisions">
+          <table className="w-full text-sm"><tbody>{p.recent_approvals.map((a) => (
+            <tr key={a.id} className="border-t border-slate-100"><td className="py-1.5">{a.agent_name}: {a.action}</td><td className="text-slate-600">{Object.entries(a.summary).map(([k, v]) => `${k}: ${v}`).join(' · ')}</td><td><Pill ok={a.status === 'approved'}>{a.status}</Pill></td><td className="text-right">{(a as any).can_revoke && <Btn danger onClick={() => actions.revokeApproval(a.id)}>Take back</Btn>}</td></tr>
+          ))}</tbody></table>
+        </Card>
+      )}
+
       {p && p.notifications.length > 0 && (
         <Card title="Notices">
           <ul className="text-sm space-y-1">{p.notifications.map((n, i) => <li key={i}><span className="text-slate-400">{time(n.ts)}</span> · {n.text}</li>)}</ul>

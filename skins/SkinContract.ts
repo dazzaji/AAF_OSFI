@@ -32,6 +32,7 @@ export interface DirectoryActions {
   declineApproval(approvalId: string): void;
   grant(agentId: string): void;                // set or change an authorization
   revokeGrant(grantId: string): void;          // withdraw one authorization
+  revokeApproval(approvalId: string): void;    // take back one approval that has not expired
   revokeAgent(agentId: string): void;          // revoke the whole registration
   setPolicy(agentId: string): void;            // what the agent may disclose
   invite(): void;                              // operator: invite a mailbox
@@ -59,7 +60,7 @@ export interface DirectoryData {
     agents: Agent[];
     pending_pairings: { id: string; user_code: string; name: string; harness: string | null; fingerprint: string; exp: number }[];
     pending_approvals: PendingApproval[];
-    recent_approvals: (PendingApproval & { status: string; decided_at: number | null })[];
+    recent_approvals: (PendingApproval & { status: string; decided_at: number | null; can_revoke: boolean })[];
     notifications: { ts: number; kind: string; text: string }[];
   };
   operator?: {

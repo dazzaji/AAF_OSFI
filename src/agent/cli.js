@@ -56,6 +56,7 @@ export async function run(argv) {
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('aaf-agent')) {
   run(process.argv.slice(2)).then((out) => { console.log(typeof out === 'string' ? out : JSON.stringify(out, null, 2)); }).catch((e) => {
     if (e instanceof AgentError) { console.log(JSON.stringify({ status: 'error', error: e.code, ...e.detail }, null, 2)); process.exit(2); }
+    if (e?.code === 'EPERM' || e?.code === 'EACCES') { console.log(JSON.stringify({ status: 'error', error: 'cannot_write_agent_home', path: e.path, hint: 'This shell is sandboxed and may not write the agent\'s key folder. Use the aaf-agent MCP server instead, or allow writes to that folder.' }, null, 2)); process.exit(2); }
     console.error(e); process.exit(1);
   });
 }

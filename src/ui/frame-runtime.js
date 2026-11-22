@@ -5,6 +5,10 @@ import { createRoot } from 'react-dom/client';
 import * as jsx from 'react/jsx-runtime';
 
 window.__AAF = { React, jsx };
+// Belt and braces with the frame's content security policy: remove the browser
+// features that can open a network path a design has no use for.
+for (const k of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'WebSocket', 'EventSource', 'fetch', 'XMLHttpRequest', 'WebTransport', 'Worker', 'SharedWorker']) { try { Object.defineProperty(window, k, { value: undefined, configurable: false, writable: false }); } catch { /* not present */ } }
+try { Object.defineProperty(navigator, 'sendBeacon', { value: () => false }); } catch { /* ignore */ }
 const root = createRoot(document.getElementById('root'));
 let Skin = null; let props = null; let skinKey = ''; let failure = null;
 
