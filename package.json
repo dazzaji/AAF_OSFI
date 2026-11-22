@@ -1,0 +1,31 @@
+{
+  "name": "aaf-minimal-reference",
+  "version": "0.1.0",
+  "description": "A minimal walkthrough implementation of the Accountable Agents Framework: a directory, a sandbox counterparty and a local agent tool.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "aaf-agent": "src/agent/cli.js"
+  },
+  "scripts": {
+    "directory": "node --disable-warning=ExperimentalWarning src/directory/server.js",
+    "shop": "node --disable-warning=ExperimentalWarning src/shop/server.js",
+    "start": "node --disable-warning=ExperimentalWarning scripts/start.js",
+    "agent": "node src/agent/cli.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 work/tests/*.test.js",
+    "scenarios": "node --disable-warning=ExperimentalWarning work/tests/scenarios.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.1.0",
+    "esbuild": "^0.28.2",
+    "jose": "^6.2.18",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}

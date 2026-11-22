@@ -1,0 +1,11 @@
+{
+  "name": "Sandbox Print Shop",
+  "currency": "USD",
+  "approval_above": 50,
+  "catalog": [
+    { "sku": "cards-500", "name": "Business cards, box of 500", "price": 38 },
+    { "sku": "cards-5000", "name": "Business cards, run of 5,000", "price": 480 },
+    { "sku": "flyers-100", "name": "Flyers, pack of 100", "price": 22 },
+    { "sku": "banner-xl", "name": "Vinyl banner, extra large", "price": 140 }
+  ]
+}
