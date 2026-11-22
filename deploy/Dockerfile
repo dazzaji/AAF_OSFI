@@ -1,7 +1,7 @@
 FROM node:22-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && install -d -o node -g node -m 0700 /data
 COPY src ./src
 COPY config ./config
 COPY skins ./skins

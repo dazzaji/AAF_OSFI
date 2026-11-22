@@ -1,9 +1,9 @@
 # The pilot on one host: directory + shop, each with its own state and key.
 # Nothing is published on a host port. Put a tunnel or reverse proxy in front
 # (see docs/DEPLOYING.md). Copy deploy/.env.example to deploy/.env first.
-#   docker compose -p aaf-pilot -f deploy/docker-compose.yml up -d --build
-#   docker compose -p aaf-pilot -f deploy/docker-compose.yml down        (rollback; data volumes are kept)
-name: aaf-pilot
+#   docker compose -p aaf-osfi -f deploy/docker-compose.yml up -d --build
+#   docker compose -p aaf-osfi -f deploy/docker-compose.yml down        (rollback; data volumes are kept)
+name: aaf-osfi
 services:
   directory:
     build: { context: .., dockerfile: deploy/Dockerfile }
@@ -45,7 +45,7 @@ services:
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     networks: [pilot]
   tunnel:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.10.3@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39
     command: tunnel --no-autoupdate run
     environment: { TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN}" }
     depends_on: [directory, shop]

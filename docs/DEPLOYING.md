@@ -13,13 +13,13 @@ Edit `deploy/.env`: the two public addresses, the operator's email, the mail set
 ## 2. Start
 
 ```bash
-docker compose -p aaf-pilot -f deploy/docker-compose.yml up -d --build
+docker compose -p aaf-osfi -f deploy/docker-compose.yml up -d --build
 ```
 
 The services listen only inside the Compose network (directory on 4100, shop on 4200). Check them:
 
 ```bash
-docker compose -p aaf-pilot -f deploy/docker-compose.yml ps
+docker compose -p aaf-osfi -f deploy/docker-compose.yml ps
 ```
 
 ## 3. Publish over HTTPS
@@ -27,7 +27,7 @@ docker compose -p aaf-pilot -f deploy/docker-compose.yml ps
 Either:
 
 - **Cloudflare Tunnel** (no open ports, no certificates): create a tunnel with two public hostnames pointing at `http://directory:4100` and `http://shop:4200`, put its token in `deploy/.env`, and add `--profile tunnel` to the command in step 2.
-- **Your own reverse proxy**: attach it to the `aaf-pilot_pilot` network and proxy the two hostnames to the same addresses.
+- **Your own reverse proxy**: attach it to the `aaf-osfi_pilot` network and proxy the two hostnames to the same addresses.
 
 If your proxy or CDN challenges automated clients, exempt the shop hostname and the directory's `/api/` and `/.well-known/` paths, or agents will be blocked.
 
@@ -36,7 +36,7 @@ If your proxy or CDN challenges automated clients, exempt the shop hostname and 
 The directory writes a one-time operator link on first start:
 
 ```bash
-docker compose -p aaf-pilot -f deploy/docker-compose.yml exec directory cat /data/OPERATOR-INVITE.txt
+docker compose -p aaf-osfi -f deploy/docker-compose.yml exec directory cat /data/OPERATOR-INVITE.txt
 ```
 
 Open it in a browser and create the operator's passkey. From then on, invite principals from the operator view.
@@ -48,10 +48,10 @@ Copy a `.tsx` file into `skins/directory/` or `skins/shop/` on the host. It appe
 ## Rollback
 
 ```bash
-docker compose -p aaf-pilot -f deploy/docker-compose.yml down
+docker compose -p aaf-osfi -f deploy/docker-compose.yml down
 ```
 
-This stops the pilot and keeps its data volumes. Remove the two public hostnames from the tunnel or proxy. Always pass `-p aaf-pilot`, and never run host-wide Docker clean-up commands on a shared host.
+This stops the pilot and keeps its data volumes. Remove the two public hostnames from the tunnel or proxy. Always pass `-p aaf-osfi`, and never run host-wide Docker clean-up commands on a shared host.
 
 ## Closing the pilot
 
