@@ -1,60 +1,69 @@
-# Accountable Agents Framework: a minimal lifecycle pilot
+# Accountable Agents Framework reference implementation
 
-A small, readable implementation of the lifecycle described in *The Accountable Agents Framework (AAF): A Blueprint for AI Agent IDs*. It shows an AI agent getting an accountable ID, using it at a counterparty, being asked for more, waiting for its principal's passkey approval, being revoked, and being traced back to its principal after an incident.
+Use a desktop coding agent to try the lifecycle in *The Accountable Agents Framework (AAF): A Blueprint for AI Agent IDs*. Ask the agent in chat to get a quote or place a fictional order. The Sandbox Shop checks the agent's ID and asks for more proof when needed. You control the agent's permissions and approve specific actions with your passkey in the Directory.
 
-**Status: pilot. Not production software and not a conformity claim.** [docs/CONFORMANCE.md](docs/CONFORMANCE.md) marks every Appendix A requirement as demonstrated, partial or not implemented, with its evidence.
+## Try the hosted pilot
+
+Open the [Accountable Agents Directory](https://aaf-dir.civics.com/) and the [Sandbox Print Shop](https://aaf-shop.civics.com/). Both sites have a **Design** menu with **Story** and **Console**, and a **Data** menu with live data and read-only samples. Live enrollment is by invitation. The Shop's live decision history is available to its administrator.
+
+**Use Claude Code in the Claude desktop app or the Codex desktop app** after [one-time setup](#connect-a-desktop-agent). The live walkthrough below was tested with Claude Code Desktop on a Mac. The Codex skill and local MCP server are included. The hosted Codex desktop passkey flow has yet to be tested end to end.
+
+1. Open the Directory invitation from your inbox and create a passkey. Redeeming an emailed invitation demonstrates control of that mailbox.
+2. In a local desktop coding session, ask **“Use the AAF agent skill and register with the Directory as my demo agent.”** Compare the pairing code and key fingerprint shown in chat and in the Directory, then confirm with your passkey.
+3. Ask **“Get a quote from the Sandbox Shop for 500 business cards.”** The Shop checks a short-lived ID issued by the Directory and returns a fictional **$38** quote.
+4. Ask for a fictional order for **5,000 business cards**. The Shop asks for authorization and requires your approval of this exact **$480** order. Review the Directory confirmation and approve with your passkey, then ask the agent to continue.
+5. In the Directory, withdraw the ordering permission or revoke the agent. Withdrawing the permission blocks new orders that require it. Revoking the agent stops the Directory from issuing it new IDs.
+
+The pilot also shows how a Shop can report a transaction using its signed receipt. In a simulated release process, an authorized operator can trace that receipt to the principal, who receives a notice. See the [Appendix A conformance notes](docs/CONFORMANCE.md) for what the pilot demonstrates and where it is partial. This is a sandbox for exploring the framework. All orders are fictional.
+
+## Connect a desktop agent
+
+A local setup gives the desktop agent access to the included client. Once that is configured, the walkthrough takes place in the coding app and browser. The client holds the agent's signing key. You retain the passkey used to approve, grant, and revoke in the Directory.
+
+From a clone of this repository, with Node.js 22.13 or later, install dependencies with `npm ci`. For a new install, copy the [AAF agent skill](skill/aaf-agent/SKILL.md) for the desktop app you use.
+
+```bash
+# Claude Code in the Claude app
+mkdir -p ~/.claude/skills
+cp -R skill/aaf-agent ~/.claude/skills/
+
+# Codex desktop
+mkdir -p ~/.agents/skills
+cp -R skill/aaf-agent ~/.agents/skills/
+```
+
+Open a **local** coding session in this checkout. On first use, ask the agent to use the AAF skill and tell it the Directory and Shop addresses above (or the addresses of your own instance). The agent can initialize the client and open the pairing page. Use the [Claude Code desktop guide](https://code.claude.com/docs/en/desktop) or [Codex skill guide](https://learn.chatgpt.com/docs/build-skills) for the app's local configuration.
+
+### Local MCP server
+
+The same agent client has a [local MCP server](src/agent/mcp.js). Configure the desktop app to launch it over stdio with `node /absolute/path/to/src/agent/mcp.js`. This is useful when the desktop session's shell cannot write the agent's local profile. Initialize the client for the same profile before using MCP:
+
+```bash
+node src/agent/cli.js init https://aaf-dir.civics.com --shop https://aaf-shop.civics.com
+```
+
+Use separate `AAF_AGENT_HOME` profiles if you want the two desktop apps to represent different agents, or if you use both a hosted and a local Directory. The profile configured for MCP must match the one initialized by the client. The [command-line entry point](src/agent/cli.js) is also available for developers who want to run the flows directly.
 
 ## The three parts
 
-| Part | What it is | Where |
+| Part | What it does | Code |
 |---|---|---|
-| **Directory** | Verifies principals, registers agents, issues short-lived IDs and claims, records passkey approvals, revokes, publishes its keys, status list and practices, and can resolve an ID back to its principal under a stated process. | `src/directory/` |
-| **Sandbox Shop** | A counterparty. Verifies each presentation offline from what the directory publishes, offers four levels of access, signs a receipt for every decision. Nothing real is bought. | `src/shop/` |
-| **`aaf-agent`** | A command-line tool that holds the agent's key and speaks the protocol. Claude Code and Codex use it through a skill or as a local MCP server. | `src/agent/`, `skill/` |
+| **Directory** | Enrolls people, registers agents, issues IDs and claims, records passkey approvals, publishes revocations, and can trace an ID under a stated process. | [Directory source](src/directory/) |
+| **Sandbox Shop** | Checks the agent's presentation against a trusted Directory's published keys and status list, applies its access rules, and signs decision receipts. | [Shop source](src/shop/) |
+| **Agent client** | Holds the agent's key and handles registration, ID requests, and Shop interactions for the desktop agent. | [Agent source](src/agent/) |
 
-The principal acts only in the browser, with a passkey. The agent's tool has no way to approve, grant or revoke.
+## Run the services locally
 
-## Run it locally
-
-Needs Node.js 22.13 or later.
+With Node.js 22.13 or later, run the following from the repository root:
 
 ```bash
-npm install
-```
-
-```bash
+npm ci
 npm start
 ```
 
-This starts the directory at <http://localhost:4100> and the shop at <http://localhost:4200>. On first run the directory prints a one-time link for enrolling the operator's passkey. Open the pages in Chrome or Safari.
+Open the [local Directory](http://localhost:4100) and [local Shop](http://localhost:4200) in Chrome or Safari. On the first run, the local Directory prints a one-time link to enroll its operator. Invite a principal from the operator view, then use the desktop walkthrough with the local addresses. Developers can also initialize the client with `node src/agent/cli.js init http://localhost:4100 --shop http://localhost:4200` and run `node src/agent/cli.js help` for commands.
 
-Then, in another terminal:
-
-```bash
-node src/agent/cli.js init http://localhost:4100 --shop http://localhost:4200
-```
-
-```bash
-node src/agent/cli.js register --name "My coding agent"
-```
-
-Approve in the browser, then try `catalog`, `quote cards-500`, `order cards-500`, `order cards-5000` and `continue`. `node src/agent/cli.js help` lists everything.
-
-A local build uses labelled stand-ins: invitation links are shown to the operator instead of being emailed, and principals enrolled that way are recorded with no assurance. All three parts also run under one user account, so the local build demonstrates the flows, not the separation between agent and services.
-
-## Using it from Claude Code or Codex
-
-Copy the skill folder, then ask the agent to "register with the accountable agents directory" or "get a quote from the sandbox shop".
-
-```bash
-cp -R skill/aaf-agent ~/.claude/skills/aaf-agent
-```
-
-```bash
-cp -R skill/aaf-agent ~/.agents/skills/aaf-agent
-```
-
-The same operations are available as MCP tools: `node /absolute/path/to/src/agent/mcp.js` over stdio.
+Local invitations appear in the operator's outbox and carry no mailbox assurance. The services and agent run under one user account. For separate hosted services and real email delivery, see [Deploying the pilot](docs/DEPLOYING.md).
 
 ## Swappable page designs and sample data
 
@@ -66,7 +75,7 @@ Both web pages have a **Design** menu and a **Data** menu.
 
 ## What a counterparty checks
 
-For each request the shop verifies, without contacting the directory about that ID:
+For requests that require an agent ID, the Shop checks the presentation against the Directory's published information:
 
 1. the ID names a directory the shop trusts, and is signed by that directory's published key;
 2. it was issued for this shop and has not expired;
@@ -90,7 +99,7 @@ Each is the simplest option in the paper's Appendix C. The directory states the 
 | Revocation | Signed status list. Published bound: 30 seconds (10 to publish, 18 accepted age, 2 clock skew). |
 | Identity escrow | The directory keeps the map from each issued ID to its agent and principal. |
 
-Known limits: the directory learns which counterparty each ID is for and when; IDs are unlinkable to counterparties, not to the directory; one online signing key; no delegation, key rotation, multi-party escrow or legal-person proofing; the lawful-request step is a labelled simulation.
+Known limits: the directory learns which counterparty each ID is for and when; the default single-use IDs carry no stable identifier for the Shop, while the Directory can link its own issuances; one online signing key; no delegation, key rotation, multi-party escrow or legal-person proofing; the lawful-request step is a labelled simulation.
 
 ## Deploying
 
