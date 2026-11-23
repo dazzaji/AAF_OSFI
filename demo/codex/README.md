@@ -1,13 +1,21 @@
-# Accountable Agents Framework illustrated walkthrough
+# AAF pilot walkthrough by Codex
 
-Follow one fictional print order from an agent’s first quote through passkey approval, revocation, and a receipt that can still be traced. The walkthrough shows what the person controls in the Directory, what the Sandbox Print Shop checks, and what information each side sees.
+Follow a fictional print order from first-time agent setup through approval, withdrawal, revocation, and a signed receipt that can still be traced. This walkthrough shows the **v0.2.0** setup and uses screenshots captured against the current build.
 
-## Open the walkthrough
+**[Read the illustrated walkthrough](WALKTHROUGH.md)** · [PDF](aaf-illustrated-walkthrough.pdf) · [Word](aaf-illustrated-walkthrough.docx) · [PowerPoint with speaker notes](aaf-illustrated-walkthrough.pptx) · [Slide preview](aaf-illustrated-walkthrough-slides.pdf)
 
-- [Read the illustrated PDF](aaf-illustrated-walkthrough.pdf) for the complete story and 18 screenshots.
-- [Download the editable Word document](aaf-illustrated-walkthrough.docx) for the same illustrated narrative in Word.
-- [Download the PowerPoint deck](aaf-illustrated-walkthrough.pptx) for 11 slides with narration in the speaker notes.
+![The signed-out Directory offers the setup guide, the copyable agent message and the source link.](images/00-directory-front-door.png)
 
-The screenshots come from an isolated local rehearsal with a synthetic account, a local invitation, and browser test passkeys. All orders are fictional. The rehearsal separately shows the Directory refusing to issue a new ID and the Shop rejecting an already-issued ID before its original expiry.
+## Try the pilot
 
-[Back to the reference implementation](../../README.md)
+Visit the [Accountable Agents Directory](https://aaf-dir.civics.com/) and [Sandbox Print Shop](https://aaf-shop.civics.com/). Live enrollment is by invitation. The [setup guide](https://aaf-dir.civics.com/setup) explains desktop and command-line setup. Every order is fictional.
+
+## How the evidence was gathered
+
+**Live owner UAT** used real email, passkeys on macOS and Codex CLI. It reached the first quote, declined a request, approved a $480 order, withdrew ordering permission, and saw both services enforce revocation.
+
+**The illustrated rehearsal** used the v0.2.0 source at commit `445d641` in a separate local instance with synthetic records and browser test passkeys. It also ran the earlier-receipt report, simulated identity release, principal notices and reconnect. Those steps were deferred in this live owner run.
+
+Fresh-chat skill discovery in Codex Desktop and self-service email enrollment are follow-up work. The current CLI run used a separate client installation and test profile.
+
+[Back to the repository README](../../README.md)

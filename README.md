@@ -36,14 +36,14 @@ The ZIP's SHA-256 is `cb780f3a985fb7dc0ef6484bba43ee1b375feb365ec99a39965555cfe8
 
 | Walkthrough | Read | Present or edit |
 | --- | --- | --- |
-| **Claude Code · seven illustrated scenes** | [Read on GitHub](demo/claude/WALKTHROUGH.md) · [PDF](demo/claude/aaf-illustrated-walkthrough.pdf) | [PowerPoint](demo/claude/aaf-illustrated-walkthrough.pptx) · [Slide preview](demo/claude/aaf-illustrated-walkthrough-slides.pdf) · [Word](demo/claude/aaf-illustrated-walkthrough.docx) |
+| **Claude Code · nine illustrated scenes** | [Read on GitHub](demo/claude/WALKTHROUGH.md) · [PDF](demo/claude/aaf-illustrated-walkthrough.pdf) | [PowerPoint](demo/claude/aaf-illustrated-walkthrough.pptx) · [Slide preview](demo/claude/aaf-illustrated-walkthrough-slides.pdf) · [Word](demo/claude/aaf-illustrated-walkthrough.docx) |
 | **Codex · illustrated guide and short slide deck** | [Demo overview](demo/codex/README.md) · [PDF](demo/codex/aaf-illustrated-walkthrough.pdf) | [PowerPoint](demo/codex/aaf-illustrated-walkthrough.pptx) · [Word](demo/codex/aaf-illustrated-walkthrough.docx) |
 
 | Approve one exact order in the Directory | See the Shop reject a revoked ID |
 | --- | --- |
-| <img src="demo/claude/images/07-approve.png" width="420" alt="Directory passkey confirmation for one fictional order of 5,000 business cards at USD 480"> | <img src="demo/claude/images/13-id-rejected.png" width="420" alt="Sandbox Print Shop denies a check of a previously issued agent ID because it was revoked"> |
+| <img src="demo/claude/images/14-approve.png" width="420" alt="Directory passkey confirmation for one fictional order of 5,000 business cards at USD 480"> | <img src="demo/claude/images/21-id-rejected.png" width="420" alt="Sandbox Print Shop denies a check of a previously issued agent ID because it was revoked"> |
 
-The screenshots are from a local rehearsal with a synthetic account and test passkeys, taken before version 0.2.0. Version 0.2.0 added the setup guide, **Copy for my agent** and the command-line quickstart ([sprint notes](https://github.com/dazzaji/AAF_OSFI/issues/3)), so today's pages have a setup strip at the top that the screenshots do not show.
+The Claude Code walkthrough was rebuilt on version 0.2.0. Its screenshots are from a local rehearsal with a synthetic account and test passkeys, and they show the setup strip, **Copy for my agent** and the setup guide that version 0.2.0 added ([sprint notes](https://github.com/dazzaji/AAF_OSFI/issues/3)).
 
 ## Try the hosted pilot
 
