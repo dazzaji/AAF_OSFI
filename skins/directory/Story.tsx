@@ -3,7 +3,7 @@ import React from 'react';
 import type { SkinProps, DirectoryData } from '../SkinContract';
 
 type State = 'done' | 'current' | 'todo';
-const time = (t?: number | null) => (t ? new Date(t * 1000).toLocaleString() : 'n/a');
+const time = (t?: number | null) => (t ? new Date(t * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'n/a'); // the same format the page shell uses
 const Btn = ({ onClick, children, danger = false, primary = false }: { onClick: () => void; children: React.ReactNode; danger?: boolean; primary?: boolean }) => (
   <button onClick={onClick} className={`text-sm px-3 py-1.5 rounded-lg border ${primary ? 'bg-indigo-700 border-indigo-700 text-white font-semibold hover:bg-indigo-800' : danger ? 'border-red-300 text-red-700 hover:bg-red-50' : 'border-stone-300 hover:bg-stone-50'}`}>{children}</button>
 );
@@ -36,7 +36,8 @@ export default function Story({ data, viewer, source, actions }: SkinProps<Direc
   const hasGrant = active.some((a) => a.grants.some((g) => g.status === 'active'));
   const revoked = agents.some((a) => a.status === 'revoked');
   const waiting = pairings.length + approvals.length;
-  const proof = pr.identity_proofing?.[0];
+  const proof = pr.identity_proofing?.[0]; const setup = data.setup; const shop = setup?.shop_name ?? 'Sandbox Print Shop';
+  const order = (x: any) => (x?.sku ? `${x.item ?? x.sku} × ${x.qty} · ${x.currency ?? ''} ${x.total ?? ''}` : '');
   const standIn = !!p && /stand-in|simulated|none/i.test(`${p.identity.method} ${p.identity.assurance}`);
   const s2: State = agents.length > 0 ? 'done' : 'current';
   const s3: State = hasGrant ? 'done' : active.length > 0 ? 'current' : 'todo';
@@ -56,17 +57,25 @@ export default function Story({ data, viewer, source, actions }: SkinProps<Direc
         {viewer.role === 'public' || !p ? (
           <section className="bg-white border border-stone-200 rounded-xl p-5 mb-8 shadow-sm">
             <h2 className="text-lg font-semibold mb-1">Welcome</h2>
-            <p className="text-sm text-stone-600 mb-3 max-w-2xl">This directory checks who you are, registers the AI agents that act for you, and records exactly what each one is allowed to do. Sign in with your passkey to see your own story. New here? You need an invitation link from the operator first.</p>
-            <Btn primary onClick={() => actions.signIn()}>Sign in with passkey</Btn>
+            <p className="text-sm text-stone-600 mb-3 max-w-2xl">This directory checks who you are, registers the AI agents that act for you, and records exactly what each one is allowed to do. <strong>New here?</strong> Enrollment is by invitation. Use <strong>Give this link to your agent</strong> at the top of this page: copy the message into Claude Code, Codex or any agent that can run commands, and it walks you through. <strong>Been here before?</strong> Sign in with your passkey to see your own story.</p>
+            <div className="flex items-center gap-2 flex-wrap"><Btn primary onClick={() => actions.getStarted()}>Get started</Btn><Btn onClick={() => actions.signIn()}>Sign in with passkey</Btn>{setup && <span className="text-xs text-stone-500">Your agent's instructions: <code className="select-all">{setup.skill_url}</code></span>}</div>
           </section>
         ) : (
           <div>
+            <section className="bg-white border-2 border-indigo-300 rounded-xl p-4 mb-6 shadow-sm">
+              <h2 className="text-lg font-semibold">You're signed in as the principal</h2>
+              <p className="text-sm text-stone-600 mt-1 max-w-2xl">Your task here: register an agent to act for you, control what it may do, and revoke that authority when you choose. {viewer.role === 'operator' ? 'You are also the directory operator; operator tools are at the end of this page.' : ''}</p>
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                <Btn primary={agents.length === 0} onClick={() => actions.getStarted()}>Connect my agent</Btn>
+                <span className="text-sm text-stone-600 max-w-xl">{agents.length === 0 ? 'Your next step. It opens the message to give your agent, at the top of this page. Paste it into Claude Code, Codex or any agent that can run commands.' : 'Connect another agent with the same message.'}</span>
+              </div>
+            </section>
             <Stage n={1} state="done" title="You are verified" story="The directory knows which person stands behind your agents. Counterparties never see this unless you choose to share it.">
               <p className="text-sm bg-white border border-stone-200 rounded-lg p-3"><strong>{p.identity.value}</strong> ({p.identity.type}). Method: {p.identity.method}. Assurance: <strong>{p.identity.assurance}</strong>.{standIn && <span className="block mt-1 text-amber-800 font-semibold">Local stand-in: this is a demonstration, not real identity proofing.</span>}</p>
             </Stage>
 
-            <Stage n={2} state={s2} title="Your agent is registered" story="Registering ties an agent's secret key to you. The directory stores only the key's fingerprint, and you approved it with your passkey.">
-              {agents.length === 0 && <p className="text-sm text-stone-500">No agent yet. In Claude Code or Codex, ask your agent to register with this directory. It will send you back here.</p>}
+            <Stage n={2} state={s2} title={agents.length === 0 ? 'Register your agent' : 'Your agent is registered'} story="Registering ties an agent's secret key to you. The directory stores only the key's fingerprint, and you approved it with your passkey.">
+              {agents.length === 0 && <div className="text-sm bg-white border border-dashed border-indigo-300 rounded-lg p-3"><p className="text-stone-700">No agent yet. Use <strong>Connect my agent</strong>: copy the message into Claude Code, Codex or any agent that can run commands. Your agent then shows a pairing code and a link. Open the link in this browser and the approval screen appears with the same code.</p><div className="mt-2"><Btn primary onClick={() => actions.getStarted()}>Connect my agent</Btn></div></div>}
               {agents.map((a) => (
                 <div key={a.id} className="bg-white border border-stone-200 rounded-lg p-3 mb-2 text-sm flex items-center gap-2 flex-wrap">
                   <strong>{a.name}</strong><Pill ok={a.status === 'active'}>{a.status === 'active' ? 'registered' : `revoked by ${a.revoked_by ?? 'principal'}`}</Pill>
@@ -76,7 +85,7 @@ export default function Story({ data, viewer, source, actions }: SkinProps<Direc
               ))}
             </Stage>
 
-            <Stage n={3} state={s3} title="What it may do" story="An authorization is a spending limit for one kind of action. Without one, the agent can identify itself and nothing more.">
+            <Stage n={3} state={s3} title="What it may do" story={`An authorization says what an agent may do, where, up to how much per order, and until when. Here that is placing fictional orders at the ${shop}: there is no charge in this demo. Without one, the agent can identify itself and ask for quotes, nothing more.`}>
               {agents.length === 0 && <p className="text-sm text-stone-500">Nothing to authorize until an agent is registered.</p>}
               {agents.map((a) => (
                 <div key={a.id} className="bg-white border border-stone-200 rounded-lg p-3 mb-2 text-sm">
@@ -84,7 +93,7 @@ export default function Story({ data, viewer, source, actions }: SkinProps<Direc
                   {a.grants.length === 0 && <p className="text-stone-500">No authorizations.</p>}
                   {a.grants.map((g) => (
                     <div key={g.id} className="flex items-center gap-3 border-t border-stone-100 py-1.5 flex-wrap">
-                      <span>{g.action}: up to {g.currency} {g.max_amount}</span><span className="text-stone-400">v{g.version} · expires {time(g.exp)}</span>
+                      <span>{g.label ?? g.action}: up to {g.currency} {g.max_amount} per order</span><span className="text-stone-400">no charge · expires {time(g.exp)} · v{g.version} · scope <code>{g.action}</code></span>
                       <Pill ok={g.status === 'active'}>{g.status === 'active' ? 'active' : 'withdrawn'}</Pill><span className="flex-1" />
                       {g.status === 'active' && a.status === 'active' && <Btn danger onClick={() => actions.revokeGrant(g.id)}>Withdraw</Btn>}
                     </div>
@@ -93,17 +102,17 @@ export default function Story({ data, viewer, source, actions }: SkinProps<Direc
               ))}
             </Stage>
 
-            <Stage n={4} state={s4} title="Waiting for you" story="Agents never act alone on important things. They ask, and you decide with your passkey. The directory then learns what you approved.">
+            <Stage n={4} state={s4} title="Waiting for you" story="Agents never act alone on important things. They ask, and you decide with your passkey. Each request shows who asked and the deadline, in your local time. You can leave and come back before the deadline; after it, nothing is granted and the agent has to ask again.">
               {waiting === 0 && <p className="text-sm text-stone-500 bg-white border border-dashed border-stone-300 rounded-lg p-3">Nothing is waiting for you. You are all caught up.</p>}
               {pairings.map((x) => (
                 <div key={x.id} className="border-2 border-indigo-300 bg-indigo-50 rounded-lg p-3 mb-2 flex items-center gap-3 flex-wrap">
-                  <div className="flex-1 text-sm"><div className="font-semibold">{x.name} asks to be registered</div><div className="text-stone-600">code <code>{x.user_code}</code> · key {x.fingerprint}</div></div>
+                  <div className="flex-1 text-sm"><div className="font-semibold">{x.name} asks to be registered as your agent</div><div className="text-stone-600">code <code>{x.user_code}</code> · key {x.fingerprint}</div><div className="text-xs text-stone-500">requested by the agent itself{x.harness ? ` (${x.harness})` : ''} · approve by {time(x.exp)}</div></div>
                   <Btn primary onClick={() => actions.reviewPairing(x.id)}>Review</Btn>
                 </div>
               ))}
               {approvals.map((a) => (
                 <div key={a.id} className="border-2 border-indigo-300 bg-indigo-50 rounded-lg p-3 mb-2 flex items-center gap-3 flex-wrap">
-                  <div className="flex-1 text-sm"><div className="font-semibold">{a.agent_name} wants to: {a.action}</div><div className="text-stone-600">{Object.entries(a.summary ?? {}).map(([k, v]) => `${k}: ${v}`).join(' · ')}</div><div className="text-xs text-stone-500">asked by {a.counterparty} · expires {time(a.exp)}</div></div>
+                  <div className="flex-1 text-sm"><div className="font-semibold">{a.agent_name} asks to: {a.action_label ?? a.action}</div><div className="text-stone-600">{order(a.params) || Object.entries(a.summary ?? {}).map(([k, v]) => `${k}: ${v}`).join(' · ')} · <strong>fictional order, no charge</strong></div><div className="text-xs text-stone-500">requested by your agent {a.agent_name} through {a.counterparty} · approve by {time(a.exp)}</div></div>
                   <Btn onClick={() => actions.declineApproval(a.id)}>Decline</Btn><Btn primary onClick={() => actions.reviewApproval(a.id)}>Review and approve</Btn>
                 </div>
               ))}

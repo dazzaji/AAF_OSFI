@@ -1,5 +1,7 @@
 // Story: a front-desk view. Four steps of access as a staircase, the latest
 // request told as a three-part story, then earlier requests as a short timeline.
+// Any earlier request can be opened to see its receipt and, for the shop
+// administrator, to report it.
 import React from 'react';
 import type { SkinProps, ShopData, Decision } from '../SkinContract';
 
@@ -19,7 +21,8 @@ const BY: Record<string, string> = { directory: 'the directory', self: 'the agen
 const CLAIM: Record<string, string> = { authorization: 'Authorization to spend', principal_verification: 'The person behind the agent was verified', approval: "The person's approval of this exact order" };
 
 const levelOf = (d: Decision) => (d.action.endsWith('order') ? (Number(d.params?.total) > 50 ? 3 : 2) : d.action.endsWith('quote') || d.action.endsWith('check') ? 1 : 0);
-const clock = (t: number) => new Date(t * 1000).toLocaleTimeString();
+const clock = (t: number) => new Date(t * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); // the same format the page shell uses
+const fictional = (d: Decision) => (d.action.endsWith('order') ? ' · fictional order, no charge' : d.action.endsWith('quote') ? ' · fictional quote' : '');
 const what = (d: Decision) => (d.params?.sku ? `${d.action.replace('shop.', '')} ${d.params.sku}` : d.action.replace('shop.', ''));
 const short = (d: Decision) => (d.decision === 'denied' ? `Denied (${(WHY[d.reason] ?? d.reason).replace(/\.$/, '').toLowerCase()})` : LABEL[d.decision]);
 
@@ -53,15 +56,16 @@ function Part({ n, title, children }: { n: number; title: string; children: Reac
   );
 }
 
-function Latest({ d, actions, sample }: { d: Decision; actions: SkinProps['actions']; sample: boolean }) {
+function Latest({ d, actions, sample, title = 'Most recent request', onClose }: { d: Decision; actions: SkinProps['actions']; sample: boolean; title?: string; onClose?: () => void }) {
   return (
-    <section className="bg-white border-2 border-indigo-200 rounded-2xl p-5 shadow-md">
+    <section id={`receipt-${d.seq}`} className="bg-white border-2 border-indigo-200 rounded-2xl p-5 shadow-md">
       <div className="flex items-center gap-3 flex-wrap mb-3">
-        <h2 className="text-lg font-bold">Most recent request</h2>
+        <h2 className="text-lg font-bold">{title}</h2>
         <span className={`text-sm font-bold px-3 py-0.5 rounded-full border ${PILL[d.decision]}`}>{LABEL[d.decision]}</span>
-        <span className="text-sm text-slate-600">{what(d)}{d.params?.total ? ` · ${d.params.currency} ${d.params.total}` : ''}</span>
+        <span className="text-sm text-slate-600">{what(d)}{d.params?.total ? ` · ${d.params.currency} ${d.params.total}` : ''}{fictional(d)}</span>
         <span className="flex-1" />
         <span className="text-xs text-slate-400">#{d.seq} · {clock(d.ts)}</span>
+        {onClose && <button onClick={onClose} className="text-xs px-2 py-1 border border-slate-300 rounded-lg hover:bg-slate-50">Close receipt</button>}
       </div>
       <div className="grid md:grid-cols-3 gap-3">
         <Part n={1} title="The agent showed">
@@ -83,7 +87,10 @@ function Latest({ d, actions, sample }: { d: Decision; actions: SkinProps['actio
         </Part>
       </div>
       <div className="flex items-center gap-3 mt-3 flex-wrap text-xs text-slate-500">
-        {d.receipt_ref && <span>Signed receipt {d.receipt_ref}</span>}
+        {d.receipt_ref && <span>Signed receipt <code>{d.receipt_ref}</code></span>}
+        {d.result?.order_id && <span>· order <code>{d.result.order_id}</code></span>}
+        {d.result?.quote_id && <span>· quote <code>{d.result.quote_id}</code></span>}
+        {d.params?.sku && <span>· {d.params.item ?? d.params.sku} × {d.params.qty}</span>}
         <span className="flex-1" />
         {d.case_ref && <span className="font-semibold text-slate-700">Reported: {d.case_ref}</span>}
         {d.can_report && <button onClick={() => actions.reportIncident(d.seq)} disabled={sample} className="px-3 py-1.5 border border-slate-300 rounded-lg bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-50">Report incident</button>}
@@ -97,10 +104,13 @@ export default function Story({ data, source, actions }: SkinProps<ShopData>) {
   const latest = ds[0];
   const older = ds.slice(1).reverse();
   const sample = source.kind === 'sample';
+  // An earlier request the person opened. It stays open while new requests arrive.
+  const [openSeq, setOpenSeq] = React.useState<number | null>(null);
+  const opened = openSeq === null ? undefined : ds.find((d) => d.seq === openSeq);
   return (
     <div className="max-w-5xl mx-auto p-5 space-y-5 bg-white min-h-screen text-slate-900">
       <header className="flex items-end gap-3 flex-wrap">
-        <div><h1 className="text-2xl font-bold">{data.meta.name}</h1><p className="text-sm text-slate-500">The front desk. Every request an AI agent makes, and exactly why the shop answered as it did.</p></div>
+        <div><h1 className="text-2xl font-bold">{data.meta.name}</h1><p className="text-sm text-slate-500">The front desk. Every request an AI agent makes, and exactly why the shop answered as it did. This is a sandbox: every quote and order is fictional and nothing is charged.</p></div>
       </header>
       {data.trust.map((t) => (
         <div key={t.issuer} className={`rounded-xl border-2 p-3 flex items-center gap-3 flex-wrap ${t.fresh ? 'bg-green-50 border-green-300 text-green-900' : 'bg-red-50 border-red-400 text-red-900'}`}>
@@ -119,6 +129,7 @@ export default function Story({ data, source, actions }: SkinProps<ShopData>) {
       {data.feed_hidden && <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3">The request history is visible to the shop administrator. <button className="underline text-indigo-700" onClick={() => actions.adminSignIn()}>Sign in</button></p>}
       {!data.feed_hidden && !latest && <p className="text-sm text-slate-500">No agent has asked for anything yet.</p>}
       {latest && <Latest d={latest} actions={actions} sample={sample} />}
+      {opened && opened.seq !== latest?.seq && <Latest d={opened} actions={actions} sample={sample} title={`Receipt for earlier request #${opened.seq}`} onClose={() => setOpenSeq(null)} />}
       {older.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">Earlier, oldest first</h2>
@@ -126,7 +137,10 @@ export default function Story({ data, source, actions }: SkinProps<ShopData>) {
             {older.map((d) => (
               <li key={d.seq} className="ml-4 relative">
                 <span className={`absolute -left-[23px] top-1.5 w-3 h-3 rounded-full ${DOT[d.decision] ?? 'bg-slate-400'}`} />
-                <div className="text-sm"><span className="font-semibold">{short(d)}</span> <span className="text-slate-500">· {what(d)}{d.params?.total ? ` · ${d.params.currency} ${d.params.total}` : ''} · #{d.seq} {clock(d.ts)}</span></div>
+                <div className="text-sm flex items-center gap-2 flex-wrap"><span className="font-semibold">{short(d)}</span> <span className="text-slate-500">· {what(d)}{d.params?.total ? ` · ${d.params.currency} ${d.params.total}` : ''} · #{d.seq} {clock(d.ts)}</span>
+                  {d.case_ref && <span className="text-xs font-semibold text-slate-700">Reported: {d.case_ref}</span>}
+                  <button onClick={() => setOpenSeq(openSeq === d.seq ? null : d.seq)} className={`text-xs px-2 py-0.5 border rounded-lg ${openSeq === d.seq ? 'border-indigo-400 bg-indigo-50 text-indigo-800' : 'border-slate-300 hover:bg-slate-50 text-slate-700'}`}>{openSeq === d.seq ? 'Receipt open above' : 'Open receipt'}</button>
+                </div>
                 <div className="text-xs text-slate-500">{WHY[d.reason] ?? d.reason}</div>
               </li>
             ))}

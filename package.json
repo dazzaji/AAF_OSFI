@@ -1,6 +1,6 @@
 {
   "name": "aaf-minimal-reference",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A minimal walkthrough implementation of the Accountable Agents Framework: a directory, a sandbox counterparty and a local agent tool.",
   "type": "module",
   "private": true,
@@ -17,7 +17,8 @@
     "start": "node --disable-warning=ExperimentalWarning scripts/start.js",
     "agent": "node src/agent/cli.js",
     "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 work/tests/*.test.js",
-    "scenarios": "node --disable-warning=ExperimentalWarning work/tests/scenarios.js"
+    "scenarios": "node --disable-warning=ExperimentalWarning work/tests/scenarios.js",
+    "agent-zip": "node scripts/build-agent-zip.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

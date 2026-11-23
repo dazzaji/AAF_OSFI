@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "asset": "aaf-agent-v0.2.0.zip",
+  "url": "https://github.com/dazzaji/AAF_OSFI/releases/download/v0.2.0/aaf-agent-v0.2.0.zip",
+  "source": "https://github.com/dazzaji/AAF_OSFI",
+  "node": "22.13",
+  "paths": {
+    "cli": {
+      "label": "Command line",
+      "status": "pending",
+      "how": ""
+    },
+    "claude_code": {
+      "label": "Claude Code",
+      "status": "pending",
+      "how": ""
+    },
+    "codex": {
+      "label": "Codex",
+      "status": "pending",
+      "how": ""
+    }
+  },
+  "sha256": "ddf95e363fd1bc822339ee0a0af5b3733c336fe84c610fa4955df47a14177ced"
+}

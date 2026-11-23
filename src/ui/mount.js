@@ -57,7 +57,7 @@ async function buildSkin(file) {
 
 const listDir = (dir, ext) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(ext) && NAME.test(f.slice(0, -ext.length))).map((f) => ({ name: f.slice(0, -ext.length), mtime: Math.round(fs.statSync(path.join(dir, f)).mtimeMs) })).sort((a, b) => a.name.localeCompare(b.name)) : []);
 
-export function mountUi(app, { surface, projectRoot, title, mode, origin }) {
+export function mountUi(app, { surface, projectRoot, title, mode, origin, sourceUrl = '', canSeeSamples = () => true }) {
   const skinsDir = path.join(projectRoot, 'skins', surface);
   const dataDir = path.join(projectRoot, 'datasets', surface);
   const SHELL_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -67,7 +67,7 @@ export function mountUi(app, { surface, projectRoot, title, mode, origin }) {
   // no way to send the display data to another host.
   const FRAME_CSP = `sandbox allow-scripts; default-src 'none'; script-src ${origin}; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; webrtc 'block'; base-uri 'none'; form-action 'none'`;
 
-  app.get('/', (ctx) => send(ctx.res, 200, Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title.replace(/[<&]/g, '')}</title><link rel="stylesheet" href="/ui/shell.css"></head><body data-surface="${surface}" data-mode="${mode}" data-title="${title.replace(/["<&]/g, '')}"><div id="app"></div><script type="module" src="/ui/shell.js"></script></body></html>`), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': SHELL_CSP, 'referrer-policy': 'no-referrer', 'cross-origin-opener-policy': 'same-origin', 'x-content-type-options': 'nosniff' }));
+  app.get('/', (ctx) => send(ctx.res, 200, Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title.replace(/[<&]/g, '')}</title><link rel="stylesheet" href="/ui/shell.css"></head><body data-surface="${surface}" data-mode="${mode}" data-title="${title.replace(/["<&]/g, '')}" data-source="${String(sourceUrl).replace(/["<&]/g, '')}"><div id="app"></div><script type="module" src="/ui/shell.js"></script></body></html>`), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': SHELL_CSP, 'referrer-policy': 'no-referrer', 'cross-origin-opener-policy': 'same-origin', 'x-content-type-options': 'nosniff' }));
   app.get('/ui/shell.js', (ctx) => serveFile(ctx.res, path.join(here, 'shell.js')));
   app.get('/ui/shell.css', (ctx) => serveFile(ctx.res, path.join(here, 'shell.css')));
   app.get('/ui/webauthn.js', async (ctx) => send(ctx.res, 200, Buffer.from(await webauthnJs()), { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'max-age=3600' }));
@@ -83,8 +83,11 @@ export function mountUi(app, { surface, projectRoot, title, mode, origin }) {
   });
   // The runtime catalog. Open tabs poll this, so a file dropped into the
   // folder shows up in the menu within a few seconds, with no restart.
-  app.get('/api/ui/catalog', () => ({ surface, skins: listDir(skinsDir, '.tsx'), datasets: listDir(dataDir, '.json') }));
+  // Sample datasets are listed and served only to a viewer who may see them
+  // (the directory's signed-in operator). Everyone else stays on live records.
+  app.get('/api/ui/catalog', (ctx) => ({ surface, skins: listDir(skinsDir, '.tsx'), datasets: canSeeSamples(ctx) ? listDir(dataDir, '.json') : [], samples: !!canSeeSamples(ctx) }));
   app.get('/api/ui/datasets/:name', (ctx) => {
+    if (!canSeeSamples(ctx)) fail(403, 'samples_are_for_the_operator');
     if (!NAME.test(ctx.params.name)) fail(400, 'bad_dataset_name');
     const file = path.join(dataDir, ctx.params.name + '.json');
     if (!fs.existsSync(file)) fail(404, 'dataset_not_found');

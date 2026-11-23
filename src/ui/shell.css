@@ -28,3 +28,26 @@ html,body{margin:0;height:100%;font-family:ui-sans-serif,system-ui,-apple-system
 .field{display:block;font-size:13px;color:#334155;margin:10px 0}
 .field input:not([type=checkbox]),.field textarea,.copy{display:block;width:100%;margin-top:4px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;font-size:14px}
 .field.check{display:flex;align-items:center;gap:6px}
+.bar .navlink{color:#bfdbfe;text-decoration:underline;white-space:nowrap}
+.bar label[hidden]{display:none}
+.setup{background:#eff6ff;border-bottom:2px solid #93c5fd;padding:10px 14px;font-size:14px;max-height:62vh;overflow:auto}
+.setup[hidden]{display:none}
+.setup.slim{padding:6px 14px;background:#f1f5f9;border-bottom:1px solid #cbd5e1}
+.setup-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.setup-head .grow{flex:1}
+.setup-title{display:flex;flex-direction:column;gap:2px}
+.setup-title strong{font-size:16px}
+.setup-link{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:#1d4ed8;word-break:break-all}
+.setup-sub{margin:6px 0 0;font-size:13px;color:#334155}
+.setup-sub code{word-break:break-all;font-size:12px}
+.setup a.btn{text-decoration:none;display:inline-block}
+.setup-body{margin-top:10px}
+.setup-msg{display:block;font-size:12px;color:#475569}
+.setup-msg textarea{display:block;width:100%;margin-top:4px;padding:8px;border:1px solid #93c5fd;border-radius:8px;font:inherit;font-size:14px;color:#0f172a;background:#fff;resize:vertical}
+.setup-steps{margin:10px 0 0;padding-left:22px}.setup-steps li{margin-bottom:4px}
+.offscreen{position:fixed;left:-9999px;top:0;opacity:0}
+.note{background:#dbeafe;border:1px solid #93c5fd;color:#1e3a8a;border-radius:8px;padding:8px 10px;font-size:13px;margin-top:10px}
+.note[hidden]{display:none}
+.small{font-size:13px;color:#475569}
+.field.info{display:flex;gap:10px;align-items:baseline}.field-label{min-width:9.5em;color:#475569;font-weight:600}
+.modal code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;background:#f1f5f9;padding:1px 4px;border-radius:4px}

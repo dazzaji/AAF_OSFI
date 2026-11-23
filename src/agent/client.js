@@ -6,12 +6,26 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { TYP, newKeyPair, sign, peek, verify } from '../core/tokens.js';
 import { b64u, sha256b64u, randomId, nowSec } from '../core/util.js';
 
+export const VERSION = '0.2.0';
 export class AgentError extends Error { constructor(code, detail = {}) { super(code); this.code = code; this.detail = detail; } }
 
-export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.homedir(), '.aaf-agent'), openBrowser = true } = {}) {
+// Where this client is installed. The release ZIP's launcher sets it; from a
+// source checkout it is this file's folder.
+export const installRoot = () => process.env.AAF_AGENT_INSTALL_ROOT ?? path.dirname(fileURLToPath(import.meta.url));
+// The profile folder holds the agent's key. In order: the environment, then
+// the folder chosen with `init --home` (remembered beside this install, so two
+// apps on one computer need not share a key), then ~/.aaf-agent.
+export function defaultHome() {
+  if (process.env.AAF_AGENT_HOME) return process.env.AAF_AGENT_HOME;
+  try { const p = fs.readFileSync(path.join(installRoot(), 'profile-home.txt'), 'utf8').trim(); if (p) return p; } catch { /* not set */ }
+  return path.join(os.homedir(), '.aaf-agent');
+}
+
+export function createAgent({ home = defaultHome(), openBrowser = true } = {}) {
   const file = (name) => path.join(home, name);
   const read = (name, fallback = null) => (fs.existsSync(file(name)) ? JSON.parse(fs.readFileSync(file(name), 'utf8')) : fallback);
   // Written to a temporary file and renamed, so two processes never leave a
@@ -32,7 +46,18 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
   function open(url) {
     if (!openBrowser || process.env.AAF_AGENT_NO_BROWSER) return false;
     if (new URL(url).origin !== config().directory) return false; // only ever the directory
-    try { spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio: 'ignore', detached: true }).unref(); return true; } catch { return false; }
+    try {
+      const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+      const child = spawn(cmd, args, { stdio: 'ignore', detached: true }); child.on('error', () => {}); child.unref(); return true;
+    } catch { return false; }
+  }
+  // Put an identity that can no longer be used out of the way. Nothing is
+  // deleted: the old key and records move to a dated subfolder.
+  function retire(why) {
+    const names = fs.existsSync(home) ? fs.readdirSync(home).filter((f) => /^(key|pairing|last-credentials)\.json$|^(op|pending)-.*\.json$/.test(f)) : [];
+    if (names.length) { const to = file(`retired-${new Date().toISOString().replace(/[:.]/g, '-')}`); fs.mkdirSync(to, { recursive: true, mode: 0o700 }); for (const f of names) fs.renameSync(file(f), path.join(to, f)); fs.writeFileSync(path.join(to, 'why.txt'), why + '\n', { mode: 0o600 }); }
+    const { agent_id: _gone, ...rest } = read('config.json', {});
+    write('config.json', rest);
   }
 
   async function dir(method, p, body, { key = read('key.json'), iss = config().agent_id } = {}) {
@@ -49,16 +74,28 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
   return {
     home,
     init({ directory, shops = [] }) {
-      const cfg = read('config.json', {});
-      write('config.json', { ...cfg, directory: new URL(directory).origin, counterparties: [...new Set([...(cfg.counterparties ?? []), ...shops.map((s) => new URL(s).origin)])] });
+      let cfg = read('config.json', {});
+      const origin = new URL(directory).origin;
+      // A different directory is a different registration: the saved agent ID
+      // and any half-finished request belong to the old one and are set aside.
+      if (cfg.directory && cfg.directory !== origin) { retire(`moved from ${cfg.directory} to ${origin}`); cfg = { counterparties: [] }; }
+      write('config.json', { ...cfg, directory: origin, counterparties: [...new Set([...(cfg.counterparties ?? []), ...shops.map((s) => new URL(s).origin)])] });
       return config();
     },
 
     // Ask the directory to register this agent. The principal approves in the
     // browser with a passkey; nothing this process can do completes it.
-    async register({ name, harness, wait = 0 } = {}) {
-      const cfg = config();
-      if (cfg.agent_id) return { status: 'already_registered', agent_id: cfg.agent_id };
+    async register({ name, harness, wait = 0, fresh = false } = {}) {
+      let cfg = config();
+      if (cfg.agent_id) {
+        // Ask the directory how this registration stands before saying "done":
+        // an agent that was revoked, or that a reset directory no longer knows,
+        // must not be told it is registered.
+        const me = await dir('GET', '/api/agent/me').catch((e) => { if (e.code === 'unknown_agent') return { status: 'unknown' }; throw e; });
+        if (me.status === 'active') { if (fresh) throw new AgentError('still_registered', { agent_id: cfg.agent_id, hint: 'This agent is registered and active. --new is only for an agent that was revoked.' }); return { status: 'already_registered', agent_id: cfg.agent_id }; }
+        if (!fresh) return { status: me.status === 'revoked' ? 'registration_revoked' : 'registration_unknown', agent_id: cfg.agent_id, next: (me.status === 'revoked' ? 'This agent ID was revoked by the user or the directory. ' : 'The directory has no record of this agent ID. ') + 'Tell the user. If they want this agent connected again, run: aaf-agent register --new (it makes a new key and asks for a new registration, which the user approves with their passkey).' };
+        retire(`registration ${me.status}; started over with --new`); cfg = config();
+      }
       let pending = read('pairing.json');
       const check = async () => {
         const s = await dir('GET', `/api/pairings/${pending.pairing_id}`, undefined, { iss: 'unregistered' });
@@ -85,13 +122,14 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
       }
       const deadline = Date.now() + wait * 1000;
       for (;;) { const r = await check(); if (r) return r; if (Date.now() >= deadline) break; await sleep(1500); }
-      return { status: 'waiting_for_principal', user_code: pending.user_code, key_fingerprint: pending.fingerprint, approve_at: pending.verify_url, next: 'Ask the user to open the link, check the code and fingerprint match, and approve with their passkey. Then run: aaf-agent register' };
+      return { status: 'waiting_for_principal', user_code: pending.user_code, key_fingerprint: pending.fingerprint, approve_at: pending.verify_url, expires_in_seconds: Math.max(0, pending.expires_at - nowSec()), next: 'Tell the user the code and the fingerprint, and ask them to open the link in their browser, check that both match, and approve with their passkey. The approval is complete when the directory page says so. Then run: aaf-agent register --wait 90 (it only checks; it approves nothing). Repeat it while this status comes back.' };
     },
 
     async status() {
       const cfg = config();
-      if (!cfg.agent_id) return { registered: false, directory: cfg.directory, counterparties: cfg.counterparties };
-      const me = await dir('GET', '/api/agent/me');
+      if (!cfg.agent_id) return { registered: false, directory: cfg.directory, counterparties: cfg.counterparties, ...(read('pairing.json') ? { pairing: 'waiting for the user to approve in the browser; run: aaf-agent register --wait 90' } : { next: 'run: aaf-agent register --name "<a label the user will recognise>"' }) };
+      const me = await dir('GET', '/api/agent/me').catch((e) => { if (e.code === 'unknown_agent') return null; throw e; });
+      if (!me) return { registered: false, directory: cfg.directory, counterparties: cfg.counterparties, note: 'The directory has no record of the agent ID saved here.', next: 'Tell the user. To connect again run: aaf-agent register --new' };
       return { registered: true, directory: cfg.directory, counterparties: cfg.counterparties, ...me, pending_actions: list('pending-').map((x) => ({ approval_id: x.approval_id, review_at: x.review_url })) };
     },
 
@@ -224,7 +262,7 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
           let st = ap.status;
           while (st === 'pending' && Date.now() < deadline) { await sleep(1500); st = (await dir('GET', `/api/approvals/${ap.approval_id}`)).status; }
           if (st === 'approved') { approvalId = ap.approval_id; continue; }
-          if (st === 'pending') return { status: 'approval_pending', reason: 'The service needs the user to approve this exact action with their passkey.', review_at: ap.review_url, next: 'Ask the user to review and approve in the browser, then run: aaf-agent continue', ...base };
+          if (st === 'pending') return { status: 'approval_pending', reason: 'The service needs the user to approve this exact action with their passkey.', review_at: ap.review_url, next: 'Ask the user to review and approve in the browser. The approval is complete when the directory page says so. Then run: aaf-agent continue (it only checks and carries on; it approves nothing).', ...base };
           dropPending(ap.approval_id);
           return { status: 'refused', reason: 'approval_' + st, ...base };
         }

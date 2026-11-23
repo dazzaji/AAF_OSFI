@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
-import { createApp, setCookie, requireSameOrigin } from '../core/http.js';
+import { createApp, setCookie, requireSameOrigin, send, serveFile } from '../core/http.js';
 import { openDb } from '../core/db.js';
 import { TYP, loadOrCreateKey, sign, verify, peek, thumbprint } from '../core/tokens.js';
 import { b64u, unb64u, sha256, sha256b64u, randomId, nowSec, canonical, digestOf, userCode, fail } from '../core/util.js';
@@ -15,6 +15,7 @@ import { emptyList, setBit, encodeList, randomFreeIndex } from '../core/statusli
 import { mountUi } from '../ui/mount.js';
 import { createTransport, mailMode, readKeyFile } from './mailer.js';
 import { safeFetch, schemeAllowed, originList, isLocalhost, parseRoutes } from '../core/net.js';
+import { renderSetupPage, agentMessage, releaseBlock } from './setup-page.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, identity_type TEXT NOT NULL, identity_value TEXT NOT NULL, method TEXT NOT NULL, assurance TEXT NOT NULL, is_operator INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, UNIQUE(identity_type, identity_value));
@@ -69,6 +70,13 @@ export function directoryConfig(env = process.env) {
     trustProxy: env.AAF_TRUST_PROXY === '1',
     rateLimit: Number(env.AAF_RATE_LIMIT ?? ((env.AAF_ENV ?? 'local') === 'local' ? 0 : 600)), // requests a minute per address; 0 = off
     projectRoot: env.AAF_PROJECT_ROOT ?? path.resolve('.'),
+    // The counterparty this pilot's authorizations are about, for plain-language screens.
+    shopUrl: (env.AAF_SHOP_URL ?? '').replace(/\/$/, '') || null,
+    shopName: env.AAF_SHOP_NAME ?? 'Sandbox Print Shop',
+    // Where the agent ZIP is downloaded from, instead of the release address in
+    // config/agent-release.json. Honoured on local and staging builds only, so
+    // a release candidate can be tested before the release exists.
+    agentZipUrl: env.AAF_AGENT_ZIP_URL || null,
   };
 }
 
@@ -92,9 +100,23 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
   const secrets = JSON.parse(fs.readFileSync(secretFile, 'utf8'));
   const rpID = new URL(cfg.url).hostname;
   const origin = new URL(cfg.url).origin;
+  const uiDir = path.join(path.dirname(new URL(import.meta.url).pathname), '../ui');
   const SESSION_COOKIE = 'aafdir_session';
   const app = createApp({ name: 'directory', rateLimit: cfg.rateLimit, trustProxy: cfg.trustProxy });
   const hmac = (secret, text) => b64u(crypto.createHmac('sha256', secret).update(text).digest()).slice(0, 22);
+
+  // ---------- first-time setup: one release, named in one file ----------
+  const release = JSON.parse(fs.readFileSync(path.join(cfg.projectRoot, 'config/agent-release.json'), 'utf8'));
+  const shopUrl = cfg.shopUrl ?? cfg.trustedCounterparties?.[0] ?? 'http://localhost:4200';
+  const zipUrl = cfg.agentZipUrl && (cfg.mode === 'local' || cfg.staging) ? cfg.agentZipUrl : release.url;
+  const setupInfo = () => {
+    const base = { version: release.version, zip_name: release.asset, zip_url: zipUrl, zip_sha256: release.sha256, skill_url: `${cfg.url}/skill.md`, guide_url: `${cfg.url}/setup`, source_url: release.source, directory_url: cfg.url, directory_name: cfg.name, shop_url: shopUrl, shop_name: cfg.shopName, node: release.node, paths: release.paths, operator_enrolled: !!db.get('SELECT 1 FROM principals WHERE is_operator = 1'), operator_link_by_email: transport.mode === 'resend' || transport.mode === 'smtp' };
+    return { ...base, agent_message: agentMessage(base) };
+  };
+  // Plain words for what an authorization allows. The technical name stays visible as a detail.
+  const ACTION_WORDS = { 'shop.order': { may: `Place fictional orders at the ${cfg.shopName}`, one: `Place one fictional order at the ${cfg.shopName}` } };
+  const mayText = (action) => ACTION_WORDS[action]?.may ?? action;
+  const NO_CHARGE = 'None. Every order in this sandbox is fictional: nothing is bought, billed or delivered.';
 
   // ---------- evidence log (DR-2) ----------
   // Each entry carries the hash of the one before it, so a partial edit or a
@@ -240,6 +262,15 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
       : inv.state === 'bootstrap'
         ? { method: 'operator bootstrap link from the service host; the mailbox was not verified', assurance: 'none' }
         : { method: 'LOCAL STAND-IN: link shown to the operator, not emailed; the mailbox was not verified', assurance: 'none (simulated)' });
+  // The one-time operator link. Making a new one replaces any earlier unused
+  // one, and the file on the service host always holds the link that works.
+  function newOperatorInvite() {
+    const token = randomId(24);
+    db.run("UPDATE invites SET state = 'superseded', delivery = ? WHERE is_operator = 1 AND used_at IS NULL AND state != 'superseded'", LABEL.superseded);
+    db.run('INSERT INTO invites (token, email, is_operator, exp, created, delivery, state) VALUES (?,?,1,?,?,?,?)', token, cfg.operatorEmail.toLowerCase(), nowSec() + 7 * 86400, nowSec(), LABEL.bootstrap, 'bootstrap');
+    fs.writeFileSync(path.join(cfg.dataDir, 'OPERATOR-INVITE.txt'), `${cfg.url}/?invite=${token}\n`, { mode: 0o600 });
+    return token;
+  }
   const liveInvite = (token) => db.get(`SELECT * FROM invites WHERE token = ? AND used_at IS NULL AND state IN ${REDEEMABLE} AND exp > ?`, token, nowSec()) ?? fail(404, 'invite_invalid_or_used');
 
   app.get('/api/invites/:token', (ctx) => { const inv = liveInvite(ctx.params.token); const how = proofingFor(inv); return { email: inv.email, is_operator: !!inv.is_operator, proof_note: how.assurance === 'low' ? 'That whoever opened this single-use link could read that mailbox. It does not prove a legal identity.' : `Nothing about the mailbox: ${how.method}. The record will say so.` }; });
@@ -321,6 +352,9 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
     if (!g || typeof g.action !== 'string' || !/^[a-z0-9_.:-]{1,64}$/.test(g.action) || !(max > 0) || max > 1e6) fail(400, 'invalid_grant');
     return { action: g.action, max_amount: max, currency: (g.currency ?? 'USD').toUpperCase().slice(0, 3), days: Math.min(Math.max(Number(g.days ?? 30), 1), 365) };
   };
+  // The signed parameters of an order, in the order a person reads them. Any
+  // parameter this pilot does not know is still shown, so nothing signed is hidden.
+  const orderLines = (params = {}) => { const p = params ?? {}; const known = ['item', 'sku', 'qty', 'total', 'currency']; return [...(p.item !== undefined || p.sku !== undefined ? [['Item', [p.item, p.sku && `(${p.sku})`].filter(Boolean).join(' ')]] : []), ...(p.qty !== undefined ? [['Quantity', String(p.qty)]] : []), ...(p.total !== undefined ? [['Total', typeof p.total === 'number' ? fmtMoney(p.total, p.currency ?? '') : String(p.total)]] : []), ...Object.entries(p).filter(([k]) => !known.includes(k)).map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)])]; };
   const normPolicy = (p) => ({ share_verification: p?.share_verification !== false, share_identity_with: Array.isArray(p?.share_identity_with) ? p.share_identity_with.filter((o) => typeof o === 'string').slice(0, 20) : [] });
 
   const OPS = {
@@ -329,7 +363,7 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
         const pairing = db.get("SELECT * FROM pairings WHERE id = ? AND status = 'pending' AND exp > ?", args.pairing_id, nowSec()) ?? fail(404, 'pairing_not_found_or_expired');
         const grant = args.grant ? normGrant(args.grant) : null;
         const policy = normPolicy(args.policy);
-        return { args: { pairing_id: pairing.id, grant, policy }, display: { title: 'Register this agent as yours', lines: [['Agent name', pairing.name], ['Software', pairing.harness ?? 'not stated'], ['Pairing code', pairing.user_code], ['Key fingerprint', pairing.fingerprint], ['Initial authorization', grant ? `${grant.action} up to ${fmtMoney(grant.max_amount, grant.currency)} per action, for ${grant.days} days` : 'none'], ['Share how you were verified', policy.share_verification ? 'yes, when a service asks' : 'no'], ['Share your verified email', policy.share_identity_with.length ? 'only with ' + policy.share_identity_with.join(', ') : 'never']], warning: 'Only approve if the code and fingerprint match what your agent shows on this computer.' } };
+        return { args: { pairing_id: pairing.id, grant, policy }, display: { title: 'Register this agent as yours', lines: [['Agent name', pairing.name], ['Software', pairing.harness ?? 'not stated'], ['Pairing code', pairing.user_code], ['Key fingerprint', pairing.fingerprint], ['It may', grant ? mayText(grant.action) : 'Identify itself and ask for quotes. Nothing else until you set an authorization.'], ...(grant ? [['Where', `${cfg.shopName} (${shopUrl})`], ['Maximum per order', fmtMoney(grant.max_amount, grant.currency)], ['Expires after', `${grant.days} days`], ['Charge', NO_CHARGE], ['Technical scope', grant.action]] : []), ['Share how you were verified', policy.share_verification ? 'yes, when a service asks' : 'no'], ['Share your verified email', policy.share_identity_with.length ? 'only with ' + policy.share_identity_with.join(', ') : 'never']], warning: 'Only approve if the code and fingerprint match what your agent shows on this computer.' } };
       },
       execute(principal, args) {
         const pairing = db.get("SELECT * FROM pairings WHERE id = ? AND status = 'pending' AND exp > ?", args.pairing_id, nowSec()) ?? fail(409, 'pairing_not_found_or_expired');
@@ -350,7 +384,7 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
         if (agent.status !== 'active') fail(409, 'agent_revoked');
         const g = normGrant(args);
         const old = db.get("SELECT * FROM grants WHERE agent_id = ? AND action = ? AND status = 'active'", agent.id, g.action);
-        return { args: { agent_id: agent.id, ...g, replaces: old ? `${old.id}:${old.version}` : null }, display: { title: old ? 'Change this authorization' : 'Grant this authorization', lines: [['Agent', agent.name], ['May do', g.action], ['Limit', `${fmtMoney(g.max_amount, g.currency)} per action`], ['Lasts', `${g.days} days`], ['Replaces', old ? `${fmtMoney(old.max_amount, old.currency)} per action (version ${old.version})` : 'nothing']] } };
+        return { args: { agent_id: agent.id, ...g, replaces: old ? `${old.id}:${old.version}` : null }, display: { title: old ? 'Change this authorization' : 'Grant this authorization', lines: [['Agent', agent.name], ['It may', mayText(g.action)], ...(ACTION_WORDS[g.action] ? [['Where', `${cfg.shopName} (${shopUrl})`]] : []), ['Maximum per order', fmtMoney(g.max_amount, g.currency)], ['Expires after', `${g.days} days`], ['Charge', NO_CHARGE], ['Replaces', old ? `${fmtMoney(old.max_amount, old.currency)} per order (version ${old.version})` : 'nothing'], ['Technical scope', g.action]] } };
       },
       execute(principal, args) {
         const agent = agentOf(principal, args.agent_id);
@@ -368,7 +402,7 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
     grant_revoke: {
       prepare(principal, args) {
         const grant = db.get('SELECT g.*, a.name AS agent_name FROM grants g JOIN agents a ON a.id = g.agent_id WHERE g.id = ? AND a.principal_id = ?', args.grant_id, principal.id) ?? fail(404, 'grant_not_found');
-        return { args: { grant_id: grant.id }, display: { title: 'Withdraw this authorization', lines: [['Agent', grant.agent_name], ['Authorization', `${grant.action} up to ${fmtMoney(grant.max_amount, grant.currency)}`], ['Effect', 'The agent keeps its registration and can still identify itself. This authorization stops verifying within the published time.']] } };
+        return { args: { grant_id: grant.id }, display: { title: 'Withdraw this authorization', lines: [['Agent', grant.agent_name], ['Authorization', `${mayText(grant.action)}, up to ${fmtMoney(grant.max_amount, grant.currency)} per order`], ['Technical scope', grant.action], ['Effect', 'The agent keeps its registration and can still identify itself. This authorization stops verifying within the published time.']] } };
       },
       execute(principal, args) {
         const grant = db.get('SELECT g.* FROM grants g JOIN agents a ON a.id = g.agent_id WHERE g.id = ? AND a.principal_id = ?', args.grant_id, principal.id) ?? fail(404, 'grant_not_found');
@@ -422,7 +456,7 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
         const grant = db.get('SELECT * FROM grants WHERE id = ?', ap.grant_id);
         // The challenge commits to the ticket and the grant version, so the
         // assertion cannot be moved to another action, counterparty or grant.
-        return { args: { approval_id: ap.id }, bind: { ticket_digest: ap.ticket_digest, grant_id: ap.grant_id, grant_version: ap.grant_version }, display: { title: 'Approve this one action', lines: [['Requested by', `${ap.counterparty} (request signature verified)`], ['Action', d.action], ...Object.entries(d.params ?? {}).map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)]), ['Agent', ap.agent_name], ['Under authorization', `${grant.action} up to ${fmtMoney(grant.max_amount, grant.currency)} (version ${grant.version})`], ['Approval expires', new Date(ap.exp * 1000).toLocaleTimeString()]], warning: 'This approves exactly this action, once. It does not widen what the agent may do.' } };
+        return { args: { approval_id: ap.id }, bind: { ticket_digest: ap.ticket_digest, grant_id: ap.grant_id, grant_version: ap.grant_version }, display: { title: 'Approve this one action', lines: [['Requested by', `${ap.counterparty} (request signature verified)`], ['Asked for by your agent', ap.agent_name], ['What', ACTION_WORDS[d.action]?.one ?? d.action], ...orderLines(d.params), ['Charge', NO_CHARGE], ['Under your authorization', `${mayText(grant.action)}, up to ${fmtMoney(grant.max_amount, grant.currency)} per order (version ${grant.version})`], ['Approve by', { time: ap.exp }], ['Technical scope', d.action]], warning: 'This approves exactly this one order, once. It does not widen what the agent may do.' } };
       },
       execute(principal, args, evidence) {
         const ap = db.get("SELECT * FROM approvals WHERE id = ? AND principal_id = ? AND status = 'pending' AND exp > ?", args.approval_id, principal.id, nowSec()) ?? fail(409, 'approval_not_found_or_expired');
@@ -439,7 +473,7 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
       prepare(principal, args) {
         const ap = db.get("SELECT ap.*, a.name AS agent_name FROM approvals ap JOIN agents a ON a.id = ap.agent_id WHERE ap.id = ? AND ap.principal_id = ? AND ap.status = 'approved'", args.approval_id, principal.id) ?? fail(404, 'approval_not_found');
         const d = JSON.parse(ap.details);
-        return { args: { approval_id: ap.id }, display: { title: 'Take back this approval', lines: [['Agent', ap.agent_name], ['For', ap.counterparty], ['Action', d.action], ...Object.entries(d.params ?? {}).map(([k, v]) => [k, String(v)]), ['Effect', 'If the action has not been carried out yet, it no longer can be under this approval. If it already has, this does not undo it. Nothing else the agent may do changes.']] } };
+        return { args: { approval_id: ap.id }, display: { title: 'Take back this approval', lines: [['Agent', ap.agent_name], ['For', ap.counterparty], ['What', ACTION_WORDS[d.action]?.one ?? d.action], ...orderLines(d.params), ['Effect', 'If the action has not been carried out yet, it no longer can be under this approval. If it already has, this does not undo it. Nothing else the agent may do changes.']] } };
       },
       execute(principal, args) {
         const ap = db.get("SELECT * FROM approvals WHERE id = ? AND principal_id = ? AND status = 'approved'", args.approval_id, principal.id) ?? fail(409, 'approval_not_found');
@@ -504,7 +538,7 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
     const binding = { ceremony: id, op: ctx.body.op, principal: principal.id, args: prepared.args, bind: prepared.bind ?? null, display: prepared.display, exp };
     const options = await generateAuthenticationOptions({ rpID, userVerification: 'required', allowCredentials: passkeysOf(principal.id).map((p) => ({ id: p.cred_id, transports: p.transports ? JSON.parse(p.transports) : undefined })), challenge: new Uint8Array(sha256(canonical(binding))) });
     db.run('INSERT INTO ceremonies (id, kind, principal_id, challenge, op, args, display, exp) VALUES (?,?,?,?,?,?,?,?)', id, 'confirm', principal.id, options.challenge, ctx.body.op, JSON.stringify(prepared.args), JSON.stringify(prepared.display), exp);
-    return { ceremony_id: id, display: prepared.display, options };
+    return { ceremony_id: id, display: prepared.display, options, expires_in: 180 };
   });
   app.post('/api/confirm/finish', async (ctx) => {
     requireSameOrigin(ctx, origin);
@@ -741,18 +775,54 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
   app.get('/.well-known/aaf-status', (ctx) => { ctx.res.writeHead(200, { 'content-type': 'application/jwt', 'cache-control': 'no-store', ...cors }); ctx.res.end(statusJwt); });
   app.get('/healthz', () => ({ ok: true, service: 'directory', status_rev: statusMeta.rev }));
 
+  // ---------- first-time setup: public pages (no session, nothing privileged) ----------
+  // The skill is the agent's setup guide. It is the file in the repository with
+  // this deployment's release block put where its marker is.
+  app.get('/skill.md', (ctx) => {
+    const info = setupInfo();
+    const text = fs.readFileSync(path.join(cfg.projectRoot, 'skill/aaf-agent/SKILL.md'), 'utf8').replace('<!--AAF_RELEASE-->', releaseBlock(info)).replaceAll(release.url, info.zip_url);
+    send(ctx.res, 200, text, { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff' });
+  });
+  app.get('/setup', (ctx) => send(ctx.res, 200, Buffer.from(renderSetupPage(setupInfo())), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'", 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' }));
+  app.get('/ui/setup.css', (ctx) => serveFile(ctx.res, path.join(uiDir, 'setup.css')));
+  app.get('/ui/setup.js', (ctx) => serveFile(ctx.res, path.join(uiDir, 'setup.js')));
+  // The owner's browser path on a new deployment: send the one-time operator
+  // link to the operator mailbox this service was configured with, and to no
+  // other address. Anyone may press the button; only that mailbox gets the
+  // link. It does nothing once an operator is enrolled, and the answer is the
+  // same whatever happened.
+  app.post('/api/setup/operator-link', (ctx) => {
+    requireSameOrigin(ctx, origin);
+    const answer = { ok: true, note: 'If this directory has no operator yet and can send email, a setup link is on its way to the operator mailbox it was configured with. At most one is sent every 15 minutes.' };
+    if (transport.mode !== 'resend' && transport.mode !== 'smtp') return answer;
+    const day = new Date().toISOString().slice(0, 10);
+    // The cooldown and the daily cap are reserved in the database before
+    // anything is sent, so neither a restart nor a burst of requests gets round them.
+    const token = db.tx(() => {
+      if (db.get('SELECT 1 FROM principals WHERE is_operator = 1')) return null;
+      if (nowSec() - Number(db.get("SELECT v FROM meta WHERE k='operator_link_sent'")?.v ?? 0) < 900) return null;
+      if (db.get('SELECT COUNT(*) c FROM mail_sends WHERE day = ?', day).c >= cfg.mailDailyCap) return null;
+      db.run("INSERT INTO meta (k, v) VALUES ('operator_link_sent', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", String(nowSec()));
+      db.run('INSERT INTO mail_sends (day, ts) VALUES (?,?)', day, nowSec());
+      logEvent('operator.link_emailed', {});
+      return newOperatorInvite();
+    });
+    if (token) transport.send({ to: cfg.operatorEmail.toLowerCase(), subject: `Operator setup link for ${cfg.name}`, body: `Someone asked ${cfg.name} to send its one-time operator setup link to this mailbox, which is the operator address the service was configured with.\n\nIf that was you, open this link within 7 days and create the operator passkey:\n${cfg.url}/?invite=${token}\n\nIf it was not you, ignore this message. The link works once and only until an operator is enrolled.`, idemKey: 'aaf-operator-' + token.slice(0, 20) }).catch(() => { /* never log provider text, addresses, links or keys */ });
+    return answer;
+  });
+
   // ---------- what the page shows ----------
   // Display data only. No session tokens, credential identifiers or key material.
   function view(ctx) {
     const p = session(ctx);
-    const base = { surface: 'directory', meta: { name: cfg.name, url: cfg.url, mode: cfg.mode, now: nowSec() }, viewer: { role: p ? (p.is_operator ? 'operator' : 'principal') : 'public', identity: p?.identity_value ?? null }, practices: practices(), status: { rev: statusMeta.rev, published_at: statusMeta.iat, uri: `${cfg.url}/.well-known/aaf-status` }, public: { principals: db.get('SELECT COUNT(*) c FROM principals').c, agents: db.get('SELECT COUNT(*) c FROM agents').c, ids_issued: db.get("SELECT COUNT(*) c FROM issued WHERE kind='id'").c } };
+    const base = { surface: 'directory', meta: { name: cfg.name, url: cfg.url, mode: cfg.mode, now: nowSec() }, viewer: { role: p ? (p.is_operator ? 'operator' : 'principal') : 'public', identity: p?.identity_value ?? null }, practices: practices(), status: { rev: statusMeta.rev, published_at: statusMeta.iat, uri: `${cfg.url}/.well-known/aaf-status` }, setup: setupInfo(), public: { principals: db.get('SELECT COUNT(*) c FROM principals').c, agents: db.get('SELECT COUNT(*) c FROM agents').c, ids_issued: db.get("SELECT COUNT(*) c FROM issued WHERE kind='id'").c } };
     if (!p) return base;
-    const agents = db.all('SELECT * FROM agents WHERE principal_id = ? ORDER BY created DESC', p.id).map((a) => ({ id: a.id, name: a.name, harness: a.harness, fingerprint: a.fingerprint, status: a.status, created: a.created, revoked_at: a.revoked_at, revoked_by: a.revoked_by, policy: JSON.parse(a.policy), ids_issued: db.get("SELECT COUNT(*) c FROM issued WHERE agent_id = ? AND kind='id'", a.id).c, last_issued: db.get("SELECT MAX(iat) t FROM issued WHERE agent_id = ? AND kind='id'", a.id).t, grants: db.all('SELECT id, action, max_amount, currency, version, status, exp, revoked_at FROM grants WHERE agent_id = ? ORDER BY created DESC', a.id) }));
+    const agents = db.all('SELECT * FROM agents WHERE principal_id = ? ORDER BY created DESC', p.id).map((a) => ({ id: a.id, name: a.name, harness: a.harness, fingerprint: a.fingerprint, status: a.status, created: a.created, revoked_at: a.revoked_at, revoked_by: a.revoked_by, policy: JSON.parse(a.policy), ids_issued: db.get("SELECT COUNT(*) c FROM issued WHERE agent_id = ? AND kind='id'", a.id).c, last_issued: db.get("SELECT MAX(iat) t FROM issued WHERE agent_id = ? AND kind='id'", a.id).t, grants: db.all('SELECT id, action, max_amount, currency, version, status, exp, revoked_at FROM grants WHERE agent_id = ? ORDER BY created DESC', a.id).map((g) => ({ ...g, label: mayText(g.action) })) }));
     base.principal = {
       identity: { type: p.identity_type, value: p.identity_value, method: p.method, assurance: p.assurance },
       agents,
-      pending_pairings: db.all("SELECT id, user_code, name, harness, fingerprint, exp FROM pairings WHERE status='pending' AND exp > ? ORDER BY created DESC", nowSec()).filter((x) => ctx.query.get('pair') === x.id),
-      pending_approvals: db.all("SELECT ap.id, ap.counterparty, ap.details, ap.exp, a.name AS agent_name FROM approvals ap JOIN agents a ON a.id = ap.agent_id WHERE ap.principal_id = ? AND ap.status='pending' AND ap.exp > ? ORDER BY ap.created DESC", p.id, nowSec()).map((x) => ({ id: x.id, counterparty: x.counterparty, agent_name: x.agent_name, exp: x.exp, ...JSON.parse(x.details) })),
+      pending_pairings: db.all("SELECT id, user_code, name, harness, fingerprint, exp, created FROM pairings WHERE status='pending' AND exp > ? ORDER BY created DESC", nowSec()).filter((x) => ctx.query.get('pair') === x.id),
+      pending_approvals: db.all("SELECT ap.id, ap.counterparty, ap.details, ap.exp, ap.created, a.name AS agent_name FROM approvals ap JOIN agents a ON a.id = ap.agent_id WHERE ap.principal_id = ? AND ap.status='pending' AND ap.exp > ? ORDER BY ap.created DESC", p.id, nowSec()).map((x) => { const d = JSON.parse(x.details); return { id: x.id, counterparty: x.counterparty, agent_name: x.agent_name, exp: x.exp, created: x.created, ...d, action_label: ACTION_WORDS[d.action]?.one ?? d.action, fictional: true }; }),
       recent_approvals: db.all("SELECT ap.id, ap.counterparty, ap.status, ap.exp, ap.details, ap.decided_at, a.name AS agent_name FROM approvals ap JOIN agents a ON a.id = ap.agent_id WHERE ap.principal_id = ? AND ap.status != 'pending' ORDER BY ap.created DESC LIMIT 10", p.id).map((x) => ({ id: x.id, counterparty: x.counterparty, status: x.status, agent_name: x.agent_name, decided_at: x.decided_at, can_revoke: x.status === 'approved' && x.exp > nowSec(), ...JSON.parse(x.details) })),
       notifications: db.all('SELECT ts, kind, text FROM notifications WHERE principal_id = ? ORDER BY id DESC LIMIT 20', p.id),
     };
@@ -773,14 +843,11 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
   }
   app.get('/api/view', (ctx) => view(ctx));
 
-  mountUi(app, { surface: 'directory', projectRoot: cfg.projectRoot, title: cfg.name, mode: cfg.mode, origin });
+  // Sample data is for the signed-in operator: visitors and principals stay on live records.
+  mountUi(app, { surface: 'directory', projectRoot: cfg.projectRoot, title: cfg.name, mode: cfg.mode, origin, sourceUrl: release.source, canSeeSamples: (ctx) => !!session(ctx)?.is_operator });
 
   // ---------- start-up ----------
-  if (!db.get('SELECT 1 FROM principals WHERE is_operator = 1') && !db.get('SELECT 1 FROM invites WHERE is_operator = 1 AND used_at IS NULL AND exp > ?', nowSec())) {
-    const token = randomId(24);
-    db.run('INSERT INTO invites (token, email, is_operator, exp, created, delivery, state) VALUES (?,?,1,?,?,?,?)', token, cfg.operatorEmail.toLowerCase(), nowSec() + 7 * 86400, nowSec(), LABEL.bootstrap, 'bootstrap');
-    fs.writeFileSync(path.join(cfg.dataDir, 'OPERATOR-INVITE.txt'), `${cfg.url}/?invite=${token}\n`, { mode: 0o600 });
-  }
+  if (!db.get('SELECT 1 FROM principals WHERE is_operator = 1') && !db.get(`SELECT 1 FROM invites WHERE is_operator = 1 AND used_at IS NULL AND state IN ${REDEEMABLE} AND exp > ?`, nowSec())) newOperatorInvite();
   // A send interrupted by a restart: resume it if its retry window is still
   // open (same idempotency key), otherwise it has failed. Never redeemable meanwhile.
   for (const inv of db.all("SELECT token, created FROM invites WHERE state = 'pending'")) {

@@ -2,7 +2,7 @@
 import React from 'react';
 import type { SkinProps, DirectoryData, Agent } from '../SkinContract';
 
-const time = (t?: number | null) => (t ? new Date(t * 1000).toLocaleString() : '—');
+const time = (t?: number | null) => (t ? new Date(t * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—'); // the same format the page shell uses
 const Card = ({ title, children, tone = 'slate' }: { title: string; children: React.ReactNode; tone?: string }) => (
   <section className={`bg-white border border-${tone}-200 rounded-xl p-4 shadow-sm`}>
     <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-3">{title}</h2>
@@ -30,14 +30,14 @@ function AgentCard({ a, actions }: { a: Agent; actions: SkinProps['actions'] }) 
         <tbody>
           {a.grants.map((g) => (
             <tr key={g.id} className="border-t border-slate-100">
-              <td className="py-1.5">{g.action}</td>
-              <td>up to {g.currency} {g.max_amount}</td>
-              <td className="text-slate-500">v{g.version}</td>
+              <td className="py-1.5">{g.label ?? g.action}<div className="text-xs text-slate-500">scope <code>{g.action}</code> · fictional orders, no charge</div></td>
+              <td>up to {g.currency} {g.max_amount} per order</td>
+              <td className="text-slate-500">expires {time(g.exp)} · v{g.version}</td>
               <td><Pill ok={g.status === 'active'}>{g.status === 'active' ? 'active' : 'withdrawn'}</Pill></td>
               <td className="text-right">{g.status === 'active' && active && <Btn danger onClick={() => actions.revokeGrant(g.id)}>Withdraw</Btn>}</td>
             </tr>
           ))}
-          {a.grants.length === 0 && <tr><td className="py-1.5 text-slate-500">No authorizations. This agent can identify itself and nothing more.</td></tr>}
+          {a.grants.length === 0 && <tr><td className="py-1.5 text-slate-500">No authorizations. This agent can identify itself and ask for quotes, nothing more.</td></tr>}
         </tbody>
       </table>
       <div className="mt-2 flex items-center gap-3 text-xs text-slate-500">
@@ -49,7 +49,8 @@ function AgentCard({ a, actions }: { a: Agent; actions: SkinProps['actions'] }) 
 }
 
 export default function Console({ data, viewer, source, actions }: SkinProps<DirectoryData>) {
-  const p = data.principal; const op = data.operator; const pr = data.practices;
+  const p = data.principal; const op = data.operator; const pr = data.practices; const setup = data.setup;
+  const order = (x: any) => (x?.sku ? `${x.item ?? x.sku} × ${x.qty} · ${x.currency ?? ''} ${x.total ?? ''}` : '');
   return (
     <div className="max-w-5xl mx-auto p-5 space-y-4">
       <header className="flex items-end justify-between flex-wrap gap-2">
@@ -62,19 +63,29 @@ export default function Console({ data, viewer, source, actions }: SkinProps<Dir
 
       {viewer.role === 'public' && (
         <Card title="Welcome">
-          <p className="mb-3">This directory verifies principals, registers their AI agents and issues accountable IDs. Sign in with your passkey to manage your agents. New here? You need an invitation link from the operator.</p>
-          <Btn primary onClick={() => actions.signIn()}>Sign in with passkey</Btn>
+          <p className="mb-3">This directory verifies principals, registers their AI agents and issues accountable IDs. <strong>New here?</strong> Enrollment is by invitation. Use <strong>Give this link to your agent</strong> at the top of this page: copy the message into Claude Code, Codex or any agent that can run commands. <strong>Been here before?</strong> Sign in with your passkey to manage your agents.</p>
+          <div className="flex items-center gap-2 flex-wrap"><Btn primary onClick={() => actions.getStarted()}>Get started</Btn><Btn onClick={() => actions.signIn()}>Sign in with passkey</Btn>{setup && <span className="text-xs text-slate-500">Your agent's instructions: <code className="select-all">{setup.skill_url}</code></span>}</div>
+        </Card>
+      )}
+
+      {p && (
+        <Card title={`You're signed in as the ${viewer.role === 'operator' ? 'operator and principal' : 'principal'}`} tone="blue">
+          <p className="text-sm">Your task here: register an agent to act for you, control what it may do, and revoke that authority when you choose.</p>
+          <div className="mt-2 flex items-center gap-3 flex-wrap">
+            <Btn primary={p.agents.length === 0} onClick={() => actions.getStarted()}>Connect my agent</Btn>
+            <span className="text-sm text-slate-600">{p.agents.length === 0 ? 'Your next step. It opens the message to give your agent, at the top of this page. Your agent then shows a code and a link; open the link in this browser and the approval screen appears with the same code.' : 'Connect another agent with the same message.'}</span>
+          </div>
         </Card>
       )}
 
       {p && p.pending_approvals.length > 0 && (
-        <Card title="Waiting for your approval" tone="blue">
+        <Card title="Waiting for you" tone="blue">
           {p.pending_approvals.map((a) => (
             <div key={a.id} className="flex items-center gap-3 border border-blue-200 bg-blue-50 rounded-lg p-3 mb-2 flex-wrap">
               <div className="flex-1">
-                <div className="font-semibold">{a.agent_name} wants to: {a.action}</div>
-                <div className="text-sm text-slate-600">{Object.entries(a.summary).map(([k, v]) => `${k}: ${v}`).join(' · ')}</div>
-                <div className="text-xs text-slate-500">asked by {a.counterparty} · expires {time(a.exp)}</div>
+                <div className="font-semibold">{a.agent_name} asks to: {a.action_label ?? a.action}</div>
+                <div className="text-sm text-slate-600">{order(a.params) || Object.entries(a.summary).map(([k, v]) => `${k}: ${v}`).join(' · ')} · <strong>fictional order, no charge</strong></div>
+                <div className="text-xs text-slate-500">requested by your agent {a.agent_name} through {a.counterparty} · approve by {time(a.exp)}</div>
               </div>
               <Btn onClick={() => actions.declineApproval(a.id)}>Decline</Btn>
               <Btn primary onClick={() => actions.reviewApproval(a.id)}>Review and approve</Btn>
@@ -85,7 +96,7 @@ export default function Console({ data, viewer, source, actions }: SkinProps<Dir
 
       {p && p.pending_pairings.map((x) => (
         <Card key={x.id} title="An agent asks to be registered" tone="blue">
-          <div className="flex items-center gap-3 flex-wrap"><div className="flex-1"><strong>{x.name}</strong> · code <code>{x.user_code}</code> · key {x.fingerprint}</div><Btn primary onClick={() => actions.reviewPairing(x.id)}>Review</Btn></div>
+          <div className="flex items-center gap-3 flex-wrap"><div className="flex-1"><strong>{x.name}</strong> · code <code>{x.user_code}</code> · key {x.fingerprint}<div className="text-xs text-slate-500">requested by the agent itself{x.harness ? ` (${x.harness})` : ''} · approve by {time(x.exp)}</div></div><Btn primary onClick={() => actions.reviewPairing(x.id)}>Review</Btn></div>
         </Card>
       ))}
 
@@ -98,7 +109,7 @@ export default function Console({ data, viewer, source, actions }: SkinProps<Dir
       {p && (
         <Card title="Your agents">
           {p.agents.map((a) => <AgentCard key={a.id} a={a} actions={actions} />)}
-          {p.agents.length === 0 && <p className="text-sm text-slate-500">No agents yet. In Claude Code or Codex, ask your agent to register with this directory. It will send you back here to approve.</p>}
+          {p.agents.length === 0 && <div className="text-sm text-slate-600"><p>No agents yet. Use <strong>Connect my agent</strong>: copy the message into Claude Code, Codex or any agent that can run commands. It sends you back here to approve with your passkey.</p><div className="mt-2"><Btn primary onClick={() => actions.getStarted()}>Connect my agent</Btn></div></div>}
         </Card>
       )}
 

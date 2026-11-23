@@ -6,6 +6,32 @@
 
 You can browse both sites. **Live enrollment and testing are currently by invitation only** because of bandwidth and compute limits on the hosting provider. With an invitation, you can connect an agent, request a quote, approve one fictional order with a passkey, and revoke the agent. All orders are fictional.
 
+## Get started
+
+**[Open the setup guide](https://aaf-dir.civics.com/setup) · [Download the AAF agent ZIP](https://github.com/dazzaji/AAF_OSFI/releases/download/v0.2.0/aaf-agent-v0.2.0.zip) · [Agent instructions (`/skill.md`)](https://aaf-dir.civics.com/skill.md)**
+
+You need an invitation to the Directory. Open it from your email and create a passkey, saved as a new entry in your password manager. Then connect an agent in one of two ways. Both use the same release ZIP, and neither needs a clone of this repository.
+
+**With a desktop agent** such as Claude Code or Codex, or any agent that can run commands: on the [Directory home page](https://aaf-dir.civics.com/), press **Copy for my agent** and paste the message into a new local session. The agent reads its instructions, tells you what it will install and where, downloads the ZIP and checks its SHA-256, and asks the Directory to register it. You compare the pairing code, approve with your passkey in the browser, and the agent gets a fictional **$38** quote. You type no Terminal commands.
+
+**From the command line**, with Node.js 22.13 or later:
+
+```bash
+curl -fL -o aaf-agent-v0.2.0.zip https://github.com/dazzaji/AAF_OSFI/releases/download/v0.2.0/aaf-agent-v0.2.0.zip
+shasum -a 256 aaf-agent-v0.2.0.zip        # Linux: sha256sum aaf-agent-v0.2.0.zip
+unzip -q aaf-agent-v0.2.0.zip
+cd aaf-agent
+node aaf-agent.mjs version
+node aaf-agent.mjs init https://aaf-dir.civics.com --shop https://aaf-shop.civics.com
+node aaf-agent.mjs register --name "My command-line agent" --harness cli
+# Approve in the browser: check the code and fingerprint, then confirm with your passkey.
+node aaf-agent.mjs register --wait 90
+node aaf-agent.mjs status
+node aaf-agent.mjs quote cards-500
+```
+
+The ZIP's SHA-256 is `ddf95e363fd1bc822339ee0a0af5b3733c336fe84c610fa4955df47a14177ced`. It is also published in the [release notes](https://github.com/dazzaji/AAF_OSFI/releases/tag/v0.2.0) and in the Directory's `/skill.md`. The ZIP holds the client (bundled, so there is no `npm install`), the same client as a local MCP server, the agent skill, a readme, the license and notices. The [setup guide](https://aaf-dir.civics.com/setup#ready) lists which paths have been verified from a fresh setup.
+
 ## See the demo
 
 | Walkthrough | Read | Present or edit |
@@ -17,16 +43,14 @@ You can browse both sites. **Live enrollment and testing are currently by invita
 | --- | --- |
 | <img src="demo/claude/images/07-approve.png" width="420" alt="Directory passkey confirmation for one fictional order of 5,000 business cards at USD 480"> | <img src="demo/claude/images/13-id-rejected.png" width="420" alt="Sandbox Print Shop denies a check of a previously issued agent ID because it was revoked"> |
 
-The screenshots are from a local rehearsal with a synthetic account and test passkeys. Follow the [next sprint on easier first-time setup](https://github.com/dazzaji/AAF_OSFI/issues/3), including a **Copy for my agent** button and a CLI quickstart.
+The screenshots are from a local rehearsal with a synthetic account and test passkeys, taken before version 0.2.0. Version 0.2.0 added the setup guide, **Copy for my agent** and the command-line quickstart ([sprint notes](https://github.com/dazzaji/AAF_OSFI/issues/3)), so today's pages have a setup strip at the top that the screenshots do not show.
 
 ## Try the hosted pilot
 
-Use the **Design** menu to switch between Story and Console. The Shop’s live decision history is available to its administrator.
-
-**Use Claude Code in the Claude desktop app or the Codex desktop app** after [one-time setup](#connect-a-desktop-agent). The live walkthrough below was tested with Claude Code Desktop on a Mac. The Codex skill and local MCP server are included. The hosted Codex desktop passkey flow has yet to be tested end to end.
+Use the **Design** menu to switch between Story and Console. Both sites show live records. The Shop’s live decision history is available to its administrator. Each header has **View source on GitHub**, and the Directory header has **Setup guide**.
 
 1. Open the Directory invitation from your inbox and create a passkey. Redeeming an emailed invitation demonstrates control of that mailbox.
-2. In a local desktop coding session, ask **“Use the AAF agent skill and register with the Directory as my demo agent.”** Compare the pairing code and key fingerprint shown in chat and in the Directory, then confirm with your passkey.
+2. [Connect your agent](#get-started): press **Copy for my agent** on the Directory and paste the message into a local desktop agent session, or use the command-line quickstart. Compare the pairing code and key fingerprint shown by the agent and in the Directory, then confirm with your passkey.
 3. Ask **“Get a quote from the Sandbox Shop for 500 business cards.”** The Shop checks a short-lived ID issued by the Directory and returns a fictional **$38** quote.
 4. Ask for a fictional order for **5,000 business cards**. The Shop asks for authorization and requires your approval of this exact **$480** order. Review the Directory confirmation and approve with your passkey, then ask the agent to continue.
 5. In the Directory, withdraw the ordering permission or revoke the agent. Withdrawing the permission blocks new orders that require it. Revoking the agent stops the Directory from issuing it new IDs.
@@ -35,31 +59,19 @@ The pilot also shows how a Shop can report a transaction using its signed receip
 
 ## Connect a desktop agent
 
-A local setup gives the desktop agent access to the included client. Once that is configured, the walkthrough takes place in the coding app and browser. The client holds the agent's signing key. You retain the passkey used to approve, grant, and revoke in the Directory.
+The [setup guide](https://aaf-dir.civics.com/setup) is the place to start. The agent client holds the agent's signing key. You keep the passkey used to approve, grant, and revoke in the Directory.
 
-From a clone of this repository, with Node.js 22.13 or later, install dependencies with `npm ci`. For a new install, copy the [AAF agent skill](skill/aaf-agent/SKILL.md) for the desktop app you use.
-
-```bash
-# Claude Code in the Claude app
-mkdir -p ~/.claude/skills
-cp -R skill/aaf-agent ~/.claude/skills/
-
-# Codex desktop
-mkdir -p ~/.agents/skills
-cp -R skill/aaf-agent ~/.agents/skills/
-```
-
-Open a **local** coding session in this checkout. On first use, ask the agent to use the AAF skill and tell it the Directory and Shop addresses above (or the addresses of your own instance). The agent can initialize the client and open the pairing page. Use the [Claude Code desktop guide](https://code.claude.com/docs/en/desktop) or [Codex skill guide](https://learn.chatgpt.com/docs/build-skills) for the app's local configuration.
+The message you copy from the Directory tells the agent to read [`/skill.md`](skill/aaf-agent/SKILL.md), which the Directory serves with the pinned download address and SHA-256. The skill has the agent install the release ZIP as a skill folder (`~/.claude/skills/aaf-agent` for Claude Code, `~/.agents/skills/aaf-agent` for Codex) and keep its key in its own profile folder. Your app may ask you to allow a download, writing those folders, running `node`, and opening a browser tab.
 
 ### Local MCP server
 
-The same agent client has a [local MCP server](src/agent/mcp.js). Configure the desktop app to launch it over stdio with `node /absolute/path/to/src/agent/mcp.js`. This is useful when the desktop session's shell cannot write the agent's local profile. Initialize the client for the same profile before using MCP:
+The ZIP also contains the same client as a local MCP server, `aaf-agent-mcp.mjs`. Configure the desktop app to launch it over stdio with `node /absolute/path/to/aaf-agent/aaf-agent-mcp.mjs`. This is useful when the desktop session's shell cannot write the agent's profile folder. Initialize the client for the same profile first:
 
 ```bash
-node src/agent/cli.js init https://aaf-dir.civics.com --shop https://aaf-shop.civics.com
+node aaf-agent.mjs init https://aaf-dir.civics.com --shop https://aaf-shop.civics.com
 ```
 
-Use separate `AAF_AGENT_HOME` profiles if you want the two desktop apps to represent different agents, or if you use both a hosted and a local Directory. The profile configured for MCP must match the one initialized by the client. The [command-line entry point](src/agent/cli.js) is also available for developers who want to run the flows directly.
+Use `init --home <folder>` (or `AAF_AGENT_HOME`) to give each app, or each Directory, its own profile. From a clone of this repository the same commands are `node src/agent/cli.js ...` after `npm ci`, and `npm run agent-zip` rebuilds the ZIP byte for byte.
 
 ## The three parts
 
@@ -84,11 +96,11 @@ Local invitations appear in the operator's outbox and carry no mailbox assurance
 
 ## Swappable page designs and sample data
 
-Both web pages have a **Design** menu and a **Data** menu.
+Both web pages have a **Design** menu. The **Data** menu, which swaps live records for a sample dataset, is shown only to the signed-in Directory operator (and on the Shop only when you run it locally). Everyone else, signed in or not, stays on live records, and a link that names a sample opens Live for them.
 
 - A design ("skin") is one React component in `skins/directory/` or `skins/shop/`. Drop a new `.tsx` file in the folder while the service is running and it appears in the menu of every open tab within a few seconds. Save a change and open tabs reload it. No build step, no restart. The contract is in [skins/SkinContract.ts](skins/SkinContract.ts).
-- A sample dataset is a JSON file in `datasets/directory/` or `datasets/shop/` with the same shape as live data. It appears in the Data menu next to "Live". Sample data is read-only and cannot affect live state.
-- Skins are untrusted. They run in a sandboxed frame with no access to the session, the network or passkeys. Sign-in, every confirmation screen and every privileged action belong to the page shell.
+- A sample dataset is a JSON file in `datasets/directory/` or `datasets/shop/` with the same shape as live data. It appears in the operator's Data menu next to "Live". Sample data is read-only and cannot affect live state.
+- Skins are untrusted. They run in a sandboxed frame with no access to the session, the network, the clipboard or passkeys. Sign-in, the setup strip with **Copy for my agent**, every confirmation screen and every privileged action belong to the page shell.
 
 ## What a counterparty checks
 

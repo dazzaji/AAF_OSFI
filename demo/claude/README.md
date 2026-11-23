@@ -44,12 +44,12 @@ The Directory and the Shop each come in two page designs, chosen from the **Desi
 | **Directory** | ![The Directory in the Story design, with sample data](images/design-directory-story.png) | ![The Directory in the Console design, with sample data](images/design-directory-console.png) |
 | **Shop** | ![The Shop in the Story design, with sample data](images/design-shop-story.png) | ![The Shop in the Console design, with sample data](images/design-shop-console.png) |
 
-Open each design on the hosted pilot with read-only sample data. No sign-in is needed.
+Open each design on the hosted pilot. No sign-in is needed to look around. Since version 0.2.0 visitors see live records only: the sample data in the screenshots above is available to the signed-in Directory operator, or to anyone running the pilot locally.
 
 | | Story | Console |
 |---|---|---|
-| **Directory** | [Open Story](https://aaf-dir.civics.com/?skin=Story&data=Agent-revoked) | [Open Console](https://aaf-dir.civics.com/?skin=Console&data=Agent-revoked) |
-| **Shop** | [Open Story](https://aaf-shop.civics.com/?skin=Story&data=Agent-revoked) | [Open Console](https://aaf-shop.civics.com/?skin=Console&data=Agent-revoked) |
+| **Directory** | [Open Story](https://aaf-dir.civics.com/?skin=Story) | [Open Console](https://aaf-dir.civics.com/?skin=Console) |
+| **Shop** | [Open Story](https://aaf-shop.civics.com/?skin=Story) | [Open Console](https://aaf-shop.civics.com/?skin=Console) |
 
 The designs are plain files in the repository: [Directory Story](../../skins/directory/Story.tsx), [Directory Console](../../skins/directory/Console.tsx), [Shop Story](../../skins/shop/Story.tsx) and [Shop Console](../../skins/shop/Console.tsx). The sample data they show is in [`datasets/`](../../datasets/).
 

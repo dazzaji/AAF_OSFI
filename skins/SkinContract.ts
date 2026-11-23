@@ -14,6 +14,12 @@
 //    shows its own confirmation screen and passkey prompt. A skin cannot make
 //    anything happen by itself, and cannot draw the confirmation.
 //  - Each action takes at most one string or number argument.
+//  - Times are seconds since 1970. Show them with
+//    toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) so a deadline
+//    reads the same in a design as on the shell's trusted screens.
+//  - A design cannot copy to the clipboard or open links. The page shell draws
+//    the first-time setup strip (the agent message, Copy, the download link);
+//    a design may show that text and ask for the strip to be opened.
 
 export interface SkinProps<D = DirectoryData | ShopData> {
   data: D;
@@ -25,6 +31,7 @@ export interface SkinProps<D = DirectoryData | ShopData> {
 }
 
 export interface DirectoryActions {
+  getStarted(): void;                          // open the shell's own first-time setup strip (copying and links live there)
   signIn(): void;
   signOut(): void;
   reviewPairing(pairingId: string): void;      // an agent asks to be registered
@@ -44,9 +51,9 @@ export interface ShopActions {
   adminSignIn(): void;
 }
 
-export interface Grant { id: string; action: string; max_amount: number; currency: string; version: number; status: 'active' | 'revoked'; exp: number; revoked_at: number | null }
+export interface Grant { id: string; action: string; label?: string; max_amount: number; currency: string; version: number; status: 'active' | 'revoked'; exp: number; revoked_at: number | null }
 export interface Agent { id: string; name: string; harness: string | null; fingerprint: string; status: 'active' | 'revoked'; created: number; revoked_at: number | null; revoked_by: string | null; policy: { share_verification: boolean; share_identity_with: string[] }; ids_issued: number; last_issued: number | null; grants: Grant[] }
-export interface PendingApproval { id: string; counterparty: string; agent_name: string; exp: number; action: string; params: Record<string, unknown>; summary: Record<string, string | number> }
+export interface PendingApproval { id: string; counterparty: string; agent_name: string; exp: number; created?: number; action_label?: string; fictional?: boolean; action: string; params: Record<string, unknown>; summary: Record<string, string | number> }
 
 export interface DirectoryData {
   surface: 'directory';
@@ -54,11 +61,13 @@ export interface DirectoryData {
   viewer: { role: 'public' | 'principal' | 'operator'; identity: string | null };
   practices: Record<string, any>;              // what the directory publishes about itself (DR-1)
   status: { rev: number; published_at: number; uri: string };
+  // First-time setup, for display. The shell owns the Copy button and the links.
+  setup?: { version: string; skill_url: string; guide_url: string; zip_url: string; zip_sha256: string; source_url: string; shop_url: string; shop_name: string; agent_message: string; operator_enrolled: boolean; paths: Record<string, { label: string; status: string; how: string }> };
   public: { principals: number; agents: number; ids_issued: number };
   principal?: {
     identity: { type: string; value: string; method: string; assurance: string };
     agents: Agent[];
-    pending_pairings: { id: string; user_code: string; name: string; harness: string | null; fingerprint: string; exp: number }[];
+    pending_pairings: { id: string; user_code: string; name: string; harness: string | null; fingerprint: string; exp: number; created?: number }[];
     pending_approvals: PendingApproval[];
     recent_approvals: (PendingApproval & { status: string; decided_at: number | null; can_revoke: boolean })[];
     notifications: { ts: number; kind: string; text: string }[];

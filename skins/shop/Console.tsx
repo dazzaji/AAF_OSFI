@@ -3,7 +3,7 @@
 import React from 'react';
 import type { SkinProps, ShopData, Decision } from '../SkinContract';
 
-const time = (t: number) => new Date(t * 1000).toLocaleTimeString();
+const time = (t: number) => new Date(t * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); // the same format the page shell uses
 const TONE: Record<string, string> = { granted: 'bg-green-100 text-green-800 border-green-300', denied: 'bg-red-100 text-red-800 border-red-300', step_up: 'bg-amber-100 text-amber-800 border-amber-300', deferred: 'bg-slate-200 text-slate-700 border-slate-300' };
 const LABEL: Record<string, string> = { granted: 'Granted', denied: 'Denied', step_up: 'Asked for more', deferred: 'Deferred' };
 const REASON: Record<string, string> = {
@@ -21,7 +21,7 @@ function Row({ d, actions }: { d: Decision; actions: SkinProps['actions'] }) {
       <div className="flex items-center gap-2 flex-wrap">
         <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${TONE[d.decision]}`}>{LABEL[d.decision]}</span>
         <strong>{d.action}</strong>
-        {d.params && <span className="text-sm text-slate-600">{d.params.sku} × {d.params.qty}{d.params.total ? ` · ${d.params.currency} ${d.params.total}` : ''}</span>}
+        {d.params && <span className="text-sm text-slate-600">{d.params.sku} × {d.params.qty}{d.params.total ? ` · ${d.params.currency} ${d.params.total}` : ''}{d.action.endsWith('order') ? ' · fictional order, no charge' : d.action.endsWith('quote') ? ' · fictional quote' : ''}</span>}
         <span className="flex-1" />
         <span className="text-xs text-slate-400">#{d.seq} · {time(d.ts)}</span>
       </div>
@@ -48,7 +48,7 @@ export default function Console({ data, source, actions }: SkinProps<ShopData>) 
     <div className="max-w-5xl mx-auto p-5 space-y-4">
       <header>
         <h1 className="text-2xl font-bold">{data.meta.name}</h1>
-        <p className="text-sm text-slate-500">A sandbox counterparty. Nothing real is bought. It decides from what an agent presents and from what each trusted directory publishes; it never asks a directory about a particular ID.</p>
+        <p className="text-sm text-slate-500">A sandbox counterparty. Every quote and order is fictional and nothing is charged. It decides from what an agent presents and from what each trusted directory publishes; it never asks a directory about a particular ID.</p>
       </header>
       <div className="grid md:grid-cols-2 gap-4">
         <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">

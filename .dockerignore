@@ -9,6 +9,7 @@ data
 *.log
 .DS_Store
 docs
-skill
 deploy
 scripts
+dist
+demo

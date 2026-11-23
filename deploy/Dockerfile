@@ -9,5 +9,7 @@ COPY src ./src
 COPY config ./config
 COPY skins ./skins
 COPY datasets ./datasets
+# The directory serves the agent skill at /skill.md.
+COPY skill ./skill
 ENV AAF_ENV=hosted AAF_BIND=0.0.0.0 NODE_OPTIONS=--disable-warning=ExperimentalWarning
 USER node

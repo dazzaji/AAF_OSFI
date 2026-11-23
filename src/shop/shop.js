@@ -40,6 +40,7 @@ export function shopConfig(env = process.env) {
     projectRoot: env.AAF_PROJECT_ROOT ?? path.resolve('.'),
     internalRoutes: env.AAF_INTERNAL_ROUTES ?? '',
     staging: env.AAF_STAGING === '1',   // private staging only: allows plain-HTTP localhost origins
+    sourceUrl: env.AAF_SOURCE_URL ?? 'https://github.com/dazzaji/AAF_OSFI',
     trustProxy: env.AAF_TRUST_PROXY === '1',
     rateLimit: Number(env.AAF_RATE_LIMIT ?? ((env.AAF_ENV ?? 'local') === 'local' ? 0 : 600)), // all requests a minute per address; 0 = off
     postLimit: Number(env.AAF_POST_LIMIT ?? ((env.AAF_ENV ?? 'local') === 'local' ? 0 : 120)), // POSTs a minute per address; 0 = off
@@ -401,7 +402,8 @@ export async function createShop(cfg) {
   }
   app.get('/api/view', (ctx) => view(ctx));
 
-  mountUi(app, { surface: 'shop', projectRoot: cfg.projectRoot, title: policy().name, mode: cfg.mode, origin });
+  // Sample data belongs to a local run. A hosted shop shows live records only.
+  mountUi(app, { surface: 'shop', projectRoot: cfg.projectRoot, title: policy().name, mode: cfg.mode, origin, sourceUrl: cfg.sourceUrl, canSeeSamples: () => cfg.mode === 'local' });
 
   let server = null;
   return {

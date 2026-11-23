@@ -4,6 +4,17 @@ The pilot is two small Node services. Each needs a public HTTPS hostname. Passke
 
 The Compose file never builds: you load one image, then start exactly that image. It publishes no host ports.
 
+## 0. The agent ZIP and its checksum
+
+The Directory's setup pages (`/setup`, `/skill.md`, the strip on its home page) link to one release asset and print its SHA-256. Both come from `config/agent-release.json`, which is part of the image.
+
+```bash
+npm ci
+npm run agent-zip -- --check     # rebuilds dist/aaf-agent-v<version>.zip and compares it with the committed SHA-256
+```
+
+For a new version: change the version, tag, asset name and address in `config/agent-release.json` and in `skill/aaf-agent/` (`SKILL.md`, `README.md`), bump `VERSION` in `src/agent/client.js`, run `npm run agent-zip -- --write`, and commit. The ZIP is built only from `src/agent`, `src/core`, `skill/aaf-agent`, `LICENSE`, `NOTICE` and the lockfile-pinned packages, with entries stored uncompressed and fixed timestamps, so the same commit and the same `npm ci` give the same bytes. Attach that file to the GitHub release named by the tag and put the SHA-256 in the release notes. The `paths` entries in the same file are the "what has been verified" table on the setup guide: mark a path verified only after a fresh setup reached a first quote that way.
+
 ## 1. Build and load the image
 
 On any machine with Docker, from the repository root:
@@ -13,6 +24,8 @@ docker buildx build --platform linux/amd64 -f deploy/Dockerfile -t aaf-osfi:$(gi
 ```
 
 Copy it to the host with `docker save` and `docker load`. Copy `deploy/`, `skins/`, `datasets/` and `config/` from the same commit into one release folder on the host; the Compose file mounts those three folders read-only, so a design, sample dataset or shop policy can be changed while the pilot runs.
+
+To upgrade a running pilot, load the new image, put the new release folder beside the old one, back up both volumes with the two services stopped, and start the new image on the same volumes with the same four variables you used before (`AAF_BUILD` changes; `AAF_ENV_FILE`, `AAF_TUNNEL_TOKEN_FILE` and `AAF_MAIL_SECRETS_DIR` do not). Pass them explicitly: a missing `AAF_MAIL_SECRETS_DIR` makes the mail key unreadable and the directory refuses to start. Version 0.2.0 changes no database schema, so the previous image can be started on the same volumes to roll back.
 
 ## 2. Configure
 
