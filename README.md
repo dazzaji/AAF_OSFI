@@ -50,7 +50,7 @@ Use separate `AAF_AGENT_HOME` profiles if you want the two desktop apps to repre
 |---|---|---|
 | **Directory** | Enrolls people, registers agents, issues IDs and claims, records passkey approvals, publishes revocations, and can trace an ID under a stated process. | [Directory source](src/directory/) |
 | **Sandbox Shop** | Checks the agent's presentation against a trusted Directory's published keys and status list, applies its access rules, and signs decision receipts. | [Shop source](src/shop/) |
-| **Agent client** | Holds the agent's key and handles registration, ID requests, and Shop interactions for the desktop agent. | [Agent source](src/agent/) |
+| **Agent client** | Holds the agent's key and handles registration, ID requests, and Shop interactions. Use it from a desktop app through the skill or local MCP, or directly from the command line. | [Agent source](src/agent/) |
 
 ## Run the services locally
 
