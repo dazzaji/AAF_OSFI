@@ -60,7 +60,22 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
       const cfg = config();
       if (cfg.agent_id) return { status: 'already_registered', agent_id: cfg.agent_id };
       let pending = read('pairing.json');
-      if (!pending || pending.expires_at <= nowSec()) {
+      const check = async () => {
+        const s = await dir('GET', `/api/pairings/${pending.pairing_id}`, undefined, { iss: 'unregistered' });
+        if (s.status === 'approved') { write('config.json', { ...config(), agent_id: s.agent_id }); remove('pairing.json'); return { status: 'registered', agent_id: s.agent_id }; }
+        if (s.status === 'denied' || s.status === 'expired') { remove('pairing.json'); return { status: 'registration_' + s.status }; }
+        return null;
+      };
+      // A saved request past its time is asked about before it is replaced: the
+      // principal may have approved it in time and the agent only came back
+      // late. The directory will not register the same key a second time, so
+      // starting again here would leave the agent unable to learn its own ID.
+      if (pending && pending.expires_at <= nowSec()) {
+        const r = await check().catch((e) => { if (e.code !== 'pairing_not_found') throw e; remove('pairing.json'); return { status: 'registration_expired' }; });
+        if (r?.status === 'registered' || r?.status === 'registration_denied') return r;
+        if (r) pending = null; // the directory agrees it is over: start again
+      }
+      if (!pending) {
         const key = read('key.json') ?? (await newKeyPair());
         write('key.json', key);
         const out = await dir('POST', '/api/pairings', { name: name ?? `Agent on ${os.hostname()}`, harness, public_jwk: key.publicJwk }, { key, iss: 'unregistered' });
@@ -68,12 +83,6 @@ export function createAgent({ home = process.env.AAF_AGENT_HOME ?? path.join(os.
         write('pairing.json', pending);
         open(pending.verify_url);
       }
-      const check = async () => {
-        const s = await dir('GET', `/api/pairings/${pending.pairing_id}`, undefined, { iss: 'unregistered' });
-        if (s.status === 'approved') { write('config.json', { ...config(), agent_id: s.agent_id }); remove('pairing.json'); return { status: 'registered', agent_id: s.agent_id }; }
-        if (s.status === 'denied' || s.status === 'expired') { remove('pairing.json'); return { status: 'registration_' + s.status }; }
-        return null;
-      };
       const deadline = Date.now() + wait * 1000;
       for (;;) { const r = await check(); if (r) return r; if (Date.now() >= deadline) break; await sleep(1500); }
       return { status: 'waiting_for_principal', user_code: pending.user_code, key_fingerprint: pending.fingerprint, approve_at: pending.verify_url, next: 'Ask the user to open the link, check the code and fingerprint match, and approve with their passkey. Then run: aaf-agent register' };
