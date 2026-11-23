@@ -8,18 +8,28 @@
   "paths": {
     "cli": {
       "label": "Command line",
-      "status": "pending",
-      "how": ""
+      "status": "verified",
+      "how": "The quickstart on this page, run as printed from an empty home folder on macOS with the downloaded release ZIP, reached a USD 38 quote (23 November 2026)."
     },
     "claude_code": {
-      "label": "Claude Code",
-      "status": "pending",
-      "how": ""
+      "label": "Claude Code (headless session)",
+      "status": "verified",
+      "how": "A fresh claude -p session (Sonnet 5.5) on macOS with no AAF skill or profile, given only the copied message, installed to ~/.claude/skills/aaf-agent and reached a USD 38 quote in three turns, with a test passkey approving in the browser (23 November 2026)."
     },
     "codex": {
-      "label": "Codex",
+      "label": "Codex (headless session)",
+      "status": "verified",
+      "how": "A fresh codex exec session (gpt-6.2-sol) on macOS with no AAF skill or profile, given only the copied message, reached a USD 38 quote in three turns. Its sandbox refused writes to ~/.agents/skills, so it said so and installed in its workspace folder (23 November 2026)."
+    },
+    "claude_desktop": {
+      "label": "Claude Code in the Claude desktop app",
       "status": "pending",
-      "how": ""
+      "how": "Pending verification: the app's own permission prompts, and replacing an older installed copy of the skill, have not been run end to end."
+    },
+    "codex_desktop": {
+      "label": "Codex desktop app",
+      "status": "pending",
+      "how": "Pending verification: the app's own permission prompts and the default skills folder have not been run end to end."
     }
   },
   "sha256": "cb780f3a985fb7dc0ef6484bba43ee1b375feb365ec99a39965555cfe8b2ac8d"

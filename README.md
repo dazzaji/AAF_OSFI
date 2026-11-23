@@ -30,7 +30,7 @@ node aaf-agent.mjs status
 node aaf-agent.mjs quote cards-500
 ```
 
-The ZIP's SHA-256 is `cb780f3a985fb7dc0ef6484bba43ee1b375feb365ec99a39965555cfe8b2ac8d`. It is also published in the [release notes](https://github.com/dazzaji/AAF_OSFI/releases/tag/v0.2.0) and in the Directory's `/skill.md`. The ZIP holds the client (bundled, so there is no `npm install`), the same client as a local MCP server, the agent skill, a readme, the license and notices. The [setup guide](https://aaf-dir.civics.com/setup#ready) lists which paths have been verified from a fresh setup.
+The ZIP's SHA-256 is `cb780f3a985fb7dc0ef6484bba43ee1b375feb365ec99a39965555cfe8b2ac8d`. It is also published in the [release notes](https://github.com/dazzaji/AAF_OSFI/releases/tag/v0.2.0) and in the Directory's `/skill.md`. The ZIP holds the client (bundled, so there is no `npm install`), the same client as a local MCP server, the agent skill, a readme, the license and notices. **Verified from a fresh setup, message or quickstart to first quote:** the command line, a headless Claude Code session, and a headless Codex session, each on macOS with test passkeys. **Pending verification:** the permission prompts of the Claude and Codex desktop apps. The [setup guide](https://aaf-dir.civics.com/setup#ready) says how each was run.
 
 ## See the demo
 
