@@ -98,4 +98,6 @@ See [docs/DEPLOYING.md](docs/DEPLOYING.md).
 
 ## Credits and license
 
-Written for the AAF paper's call for reference implementations. Christian Turner's [accountable-agents-framework](https://github.com/christortheak/accountable-agents-framework) is the fuller reference profile and implementation; this pilot is an independent, deliberately smaller one. MIT license.
+Written for the AAF paper's call for reference implementations. Christian Turner's [accountable-agents-framework](https://github.com/christortheak/accountable-agents-framework) is the fuller reference profile and implementation; this pilot is an independent, deliberately smaller one.
+
+This pilot is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for copyright and attribution.

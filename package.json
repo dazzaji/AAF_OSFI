@@ -4,7 +4,7 @@
   "description": "A minimal walkthrough implementation of the Accountable Agents Framework: a directory, a sandbox counterparty and a local agent tool.",
   "type": "module",
   "private": true,
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=22.13"
   },
