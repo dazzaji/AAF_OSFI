@@ -1,10 +1,27 @@
 # Accountable Agents Framework reference implementation
 
-Use a desktop coding agent to try the lifecycle in *The Accountable Agents Framework (AAF): A Blueprint for AI Agent IDs*. Ask the agent in chat to get a quote or place a fictional order. The Sandbox Shop checks the agent's ID and asks for more proof when needed. You control the agent's permissions and approve specific actions with your passkey in the Directory.
+**The AAF pilot is live on the web for testing.** This repository contains the full source code for this open-source reference implementation of *The Accountable Agents Framework (AAF): A Blueprint for AI Agent IDs*.
+
+**[Open the live Accountable Agents Directory](https://aaf-dir.civics.com/) · [Visit the Sandbox Print Shop](https://aaf-shop.civics.com/) · [Run your own copy](#run-the-services-locally)**
+
+You can browse both sites. **Live enrollment and testing are currently by invitation only** because of bandwidth and compute limits on the hosting provider. With an invitation, you can connect an agent, request a quote, approve one fictional order with a passkey, and revoke the agent. All orders are fictional.
+
+## See the demo
+
+| Walkthrough | Read | Present or edit |
+| --- | --- | --- |
+| **Claude Code · seven illustrated scenes** | [Read on GitHub](demo/claude/WALKTHROUGH.md) · [PDF](demo/claude/aaf-illustrated-walkthrough.pdf) | [PowerPoint](demo/claude/aaf-illustrated-walkthrough.pptx) · [Slide preview](demo/claude/aaf-illustrated-walkthrough-slides.pdf) · [Word](demo/claude/aaf-illustrated-walkthrough.docx) |
+| **Codex · illustrated guide and short slide deck** | [Demo overview](demo/codex/README.md) · [PDF](demo/codex/aaf-illustrated-walkthrough.pdf) | [PowerPoint](demo/codex/aaf-illustrated-walkthrough.pptx) · [Word](demo/codex/aaf-illustrated-walkthrough.docx) |
+
+| Approve one exact order in the Directory | See the Shop reject a revoked ID |
+| --- | --- |
+| <img src="demo/claude/images/07-approve.png" width="420" alt="Directory passkey confirmation for one fictional order of 5,000 business cards at USD 480"> | <img src="demo/claude/images/13-id-rejected.png" width="420" alt="Sandbox Print Shop denies a check of a previously issued agent ID because it was revoked"> |
+
+The screenshots are from a local rehearsal with a synthetic account and test passkeys. Follow the [next sprint on easier first-time setup](https://github.com/dazzaji/AAF_OSFI/issues/3), including a **Copy for my agent** button and a CLI quickstart.
 
 ## Try the hosted pilot
 
-Open the [Accountable Agents Directory](https://aaf-dir.civics.com/) and the [Sandbox Print Shop](https://aaf-shop.civics.com/). Both sites have a **Design** menu with **Story** and **Console**, and a **Data** menu with live data and read-only samples. Live enrollment is by invitation. The Shop's live decision history is available to its administrator.
+Use the **Design** menu to switch between Story and Console. The Shop’s live decision history is available to its administrator.
 
 **Use Claude Code in the Claude desktop app or the Codex desktop app** after [one-time setup](#connect-a-desktop-agent). The live walkthrough below was tested with Claude Code Desktop on a Mac. The Codex skill and local MCP server are included. The hosted Codex desktop passkey flow has yet to be tested end to end.
 
