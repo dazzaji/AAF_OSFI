@@ -122,7 +122,7 @@ export function createAgent({ home = defaultHome(), openBrowser = true } = {}) {
       }
       const deadline = Date.now() + wait * 1000;
       for (;;) { const r = await check(); if (r) return r; if (Date.now() >= deadline) break; await sleep(1500); }
-      return { status: 'waiting_for_principal', user_code: pending.user_code, key_fingerprint: pending.fingerprint, approve_at: pending.verify_url, expires_in_seconds: Math.max(0, pending.expires_at - nowSec()), next: 'Tell the user the code and the fingerprint, and ask them to open the link in their browser, check that both match, and approve with their passkey. The approval is complete when the directory page says so. Then run: aaf-agent register --wait 90 (it only checks; it approves nothing). Repeat it while this status comes back.' };
+      return { status: 'waiting_for_principal', user_code: pending.user_code, key_fingerprint: pending.fingerprint, approve_at: pending.verify_url, expires_in_seconds: Math.max(0, pending.expires_at - nowSec()), next: 'STOP HERE and hand over. Write the code, the fingerprint and the link to the user in a chat message, ask them to open the link in their browser, check that both match, and approve with their passkey, and end your turn. The approval is complete when the directory page says so. Only when the user says they approved, run: aaf-agent register --wait 90 (it only checks; it approves nothing).' };
     },
 
     async status() {
@@ -262,7 +262,7 @@ export function createAgent({ home = defaultHome(), openBrowser = true } = {}) {
           let st = ap.status;
           while (st === 'pending' && Date.now() < deadline) { await sleep(1500); st = (await dir('GET', `/api/approvals/${ap.approval_id}`)).status; }
           if (st === 'approved') { approvalId = ap.approval_id; continue; }
-          if (st === 'pending') return { status: 'approval_pending', reason: 'The service needs the user to approve this exact action with their passkey.', review_at: ap.review_url, next: 'Ask the user to review and approve in the browser. The approval is complete when the directory page says so. Then run: aaf-agent continue (it only checks and carries on; it approves nothing).', ...base };
+          if (st === 'pending') return { status: 'approval_pending', reason: 'The service needs the user to approve this exact action with their passkey.', review_at: ap.review_url, next: 'STOP HERE and hand over. Tell the user what is waiting and give them the link, and end your turn. The approval is complete when the directory page says so. Only when the user says they approved, run: aaf-agent continue (it only checks and carries on; it approves nothing).', ...base };
           dropPending(ap.approval_id);
           return { status: 'refused', reason: 'approval_' + st, ...base };
         }

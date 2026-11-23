@@ -66,10 +66,11 @@ export function renderSetupPage(i) {
 <li><strong>Copy this message</strong>${i.enrolled ? ' (you are signed in, so it tells the agent you are already enrolled)' : ' (sign in first and it will tell the agent you are already enrolled)'} and paste it into a new local session with your agent (in Claude Code or Codex desktop: start a new chat for a folder on this computer and paste it as your first message).
 <div class="copybox"><textarea id="agent-message" readonly rows="6">${esc(i.agent_message)}</textarea><div class="row"><button class="btn primary" data-copy="agent-message">Copy for my agent</button><a class="btn" href="${esc(i.zip_url)}">Download the AAF agent ZIP</a><span class="copied" hidden>Copied.</span></div></div>
 <p class="small">The agent reads its instructions at <a href="${esc(i.skill_url)}">${esc(i.skill_url)}</a>. Client ${esc(i.version)}, SHA-256 <code class="hash">${esc(i.zip_sha256)}</code>.</p></li>
-<li><strong>Permissions your app may ask for.</strong> The agent tells you what it will install and where. Your app may then ask you to allow four ordinary things: downloading the ZIP, writing two folders (the agent's skill folder and its key folder), running <code>node</code>, and opening a browser tab. These are expected. Nothing else is needed.</li>
+<li><strong>Say yes to the plan.</strong> The agent first tells you what it will install and in which two folders, and asks for your go-ahead. Answer yes.</li>
+<li><strong>Permissions your app may ask for.</strong> Your app may then ask you to allow four ordinary things: downloading the ZIP, writing two folders (the agent's skill folder and its key folder), running <code>node</code>, and opening a browser tab. These are expected. Nothing else is needed.</li>
 <li><strong>If Node.js is missing.</strong> The client needs Node.js ${esc(i.node)} or later. If your agent says it is missing or too old, install the current LTS release from <a href="https://nodejs.org" target="_blank" rel="noopener noreferrer">nodejs.org</a> with its standard installer, then tell the agent to continue.</li>
-<li><strong>Verify the pairing.</strong> The agent shows a <em>pairing code</em>, a <em>key fingerprint</em> and a link. Go to <a href="#approve">step 3</a>.</li>
-<li><strong>Confirm and get a quote.</strong> After you approve, the agent confirms that it is registered and asks the Shop for a quote for 500 business cards. The answer is a fictional <strong>USD 38</strong> quote.</li>
+<li><strong>Verify the pairing.</strong> The agent shows a <em>pairing code</em>, a <em>key fingerprint</em> and a link, and waits for you. Go to <a href="#approve">step 3</a>.</li>
+<li><strong>Confirm and get a quote.</strong> Tell the agent you approved. It confirms that it is registered and asks the Shop for a quote for 500 business cards. The answer is a fictional <strong>USD 38</strong> quote.</li>
 </ol></section>
 
 <section id="cli"><h2>2b. Command-line quickstart</h2>
@@ -93,7 +94,7 @@ ${cli(`node aaf-agent.mjs quote cards-500`)}
 <li>Open the link your agent or the command line printed, in the browser where you are signed in to this Directory. If you are signed out, sign in with your passkey first.</li>
 <li>Check that the <strong>pairing code</strong> and <strong>key fingerprint</strong> on the page match what the agent showed. If they differ, stop.</li>
 <li>Choose what the agent may do. The default lets it place <strong>fictional</strong> orders at the ${esc(i.shop_name)} up to a maximum per order, for 30 days. There is no charge in this demo.</li>
-<li>Confirm with your passkey. The page says <strong>Approval is complete</strong>. Go back to your agent; it notices by itself, or tell it you approved. At the command line run <code>node aaf-agent.mjs register --wait 90</code>.</li>
+<li>Confirm with your passkey. The page says <strong>Approval is complete</strong>. Go back to your agent and tell it you approved. At the command line run <code>node aaf-agent.mjs register --wait 90</code>.</li>
 </ol>
 <p>A pairing request lasts ten minutes. If it runs out, nothing is granted; ask the agent to register again. Requests that wait for you appear on the Directory page under <strong>Waiting for you</strong>, with who asked and the deadline.</p></section>
 

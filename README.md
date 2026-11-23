@@ -12,7 +12,7 @@ You can browse both sites. **Live enrollment and testing are currently by invita
 
 You need an invitation to the Directory. Open it from your email and create a passkey, saved as a new entry in your password manager. Then connect an agent in one of two ways. Both use the same release ZIP, and neither needs a clone of this repository.
 
-**With a desktop agent** such as Claude Code or Codex, or any agent that can run commands: on the [Directory home page](https://aaf-dir.civics.com/), press **Copy for my agent** and paste the message into a new local session. The agent reads its instructions, tells you what it will install and where, downloads the ZIP and checks its SHA-256, and asks the Directory to register it. You compare the pairing code, approve with your passkey in the browser, and the agent gets a fictional **$38** quote. You type no Terminal commands.
+**With a desktop agent** such as Claude Code or Codex, or any agent that can run commands: on the [Directory home page](https://aaf-dir.civics.com/), press **Copy for my agent** and paste the message into a new local session. The agent reads its instructions, tells you what it will install and where, and asks for your go-ahead. It then downloads the ZIP, checks its SHA-256, and asks the Directory to register it. You compare the pairing code, approve with your passkey in the browser, tell the agent you approved, and it gets a fictional **$38** quote. You type no Terminal commands.
 
 **From the command line**, with Node.js 22.13 or later:
 
@@ -30,7 +30,7 @@ node aaf-agent.mjs status
 node aaf-agent.mjs quote cards-500
 ```
 
-The ZIP's SHA-256 is `fb704f01e5daff3c5ccfb9899cbb80035c811e38bb370e6369984b7b38fd2221`. It is also published in the [release notes](https://github.com/dazzaji/AAF_OSFI/releases/tag/v0.2.0) and in the Directory's `/skill.md`. The ZIP holds the client (bundled, so there is no `npm install`), the same client as a local MCP server, the agent skill, a readme, the license and notices. The [setup guide](https://aaf-dir.civics.com/setup#ready) lists which paths have been verified from a fresh setup.
+The ZIP's SHA-256 is `cb780f3a985fb7dc0ef6484bba43ee1b375feb365ec99a39965555cfe8b2ac8d`. It is also published in the [release notes](https://github.com/dazzaji/AAF_OSFI/releases/tag/v0.2.0) and in the Directory's `/skill.md`. The ZIP holds the client (bundled, so there is no `npm install`), the same client as a local MCP server, the agent skill, a readme, the license and notices. The [setup guide](https://aaf-dir.civics.com/setup#ready) lists which paths have been verified from a fresh setup.
 
 ## See the demo
 
