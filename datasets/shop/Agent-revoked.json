@@ -1,0 +1,508 @@
+{
+  "surface": "shop",
+  "meta": {
+    "name": "Sandbox Print Shop",
+    "url": "https://shop.example",
+    "mode": "local",
+    "now": 1795343077
+  },
+  "viewer": {
+    "role": "admin"
+  },
+  "levels": [
+    {
+      "level": 0,
+      "example": "Browse the catalog",
+      "requires": "Nothing. Agents without an ID are still served."
+    },
+    {
+      "level": 1,
+      "example": "Get a quote",
+      "requires": "A valid accountable ID from a directory this shop trusts."
+    },
+    {
+      "level": 2,
+      "example": "Order up to USD 50",
+      "requires": "Plus a directory-attested authorization covering the amount, and how the principal was verified."
+    },
+    {
+      "level": 3,
+      "example": "Order above USD 50",
+      "requires": "Plus the principal's fresh passkey approval of that exact order."
+    }
+  ],
+  "catalog": [
+    {
+      "sku": "cards-500",
+      "name": "Business cards, box of 500",
+      "price": 38
+    },
+    {
+      "sku": "cards-5000",
+      "name": "Business cards, run of 5,000",
+      "price": 480
+    },
+    {
+      "sku": "flyers-100",
+      "name": "Flyers, pack of 100",
+      "price": 22
+    },
+    {
+      "sku": "banner-xl",
+      "name": "Vinyl banner, extra large",
+      "price": 140
+    }
+  ],
+  "currency": "USD",
+  "trust": [
+    {
+      "issuer": "https://directory.example",
+      "name": "AAF Pilot Directory",
+      "status_rev": 3,
+      "status_age": 4,
+      "fresh": true,
+      "max_age": 18,
+      "error": null
+    }
+  ],
+  "decisions": [
+    {
+      "seq": 9,
+      "ts": 1795343076,
+      "action": "shop.check",
+      "decision": "denied",
+      "reason": "id_revoked",
+      "id": "id_YCg4YyvMZ5KhijJ-JFjSCw",
+      "id_mode": "ephemeral",
+      "issuer": "https://directory.example",
+      "claims": [],
+      "status_rev": 3,
+      "status_age": 3,
+      "params": {},
+      "result": null,
+      "required": null,
+      "learned": [
+        "An accountable ID (single-use) issued by https://directory.example"
+      ],
+      "not_learned": [
+        "The principal's name, email or any other identity",
+        "Which agent software this is, or what else it has done elsewhere",
+        "Whether this is the same agent as any earlier visit"
+      ],
+      "receipt_ref": "KusYXN-mv0fY",
+      "case_ref": null,
+      "can_report": true
+    },
+    {
+      "seq": 8,
+      "ts": 1795343070,
+      "action": "shop.quote",
+      "decision": "granted",
+      "reason": "valid_id",
+      "id": "id_yWaPb4TTqovt5fUXbvsAIg",
+      "id_mode": "ephemeral",
+      "issuer": "https://directory.example",
+      "claims": [],
+      "status_rev": 2,
+      "status_age": 2,
+      "params": {
+        "sku": "flyers-100",
+        "item": "Flyers, pack of 100",
+        "qty": 1,
+        "total": 22,
+        "currency": "USD"
+      },
+      "result": {
+        "quote_id": "q_sPhg6UyL"
+      },
+      "required": null,
+      "learned": [
+        "An accountable ID (single-use) issued by https://directory.example"
+      ],
+      "not_learned": [
+        "The principal's name, email or any other identity",
+        "Which agent software this is, or what else it has done elsewhere",
+        "Whether this is the same agent as any earlier visit"
+      ],
+      "receipt_ref": "S-Oz90ns5jWj",
+      "case_ref": null,
+      "can_report": true
+    },
+    {
+      "seq": 7,
+      "ts": 1795343070,
+      "action": "shop.order",
+      "decision": "step_up",
+      "reason": "claim_required",
+      "id": "id_qWgKrA6URMGPB0QI4w2XfQ",
+      "id_mode": "ephemeral",
+      "issuer": "https://directory.example",
+      "claims": [
+        {
+          "type": "authorization",
+          "attested_by": "directory",
+          "accepted": false,
+          "reason": "claim_revoked"
+        },
+        {
+          "type": "principal_verification",
+          "attested_by": "directory",
+          "accepted": true,
+          "reason": null
+        },
+        {
+          "type": "approval",
+          "attested_by": "directory",
+          "accepted": false,
+          "reason": "claim_revoked"
+        }
+      ],
+      "status_rev": 2,
+      "status_age": 2,
+      "params": {
+        "sku": "cards-500",
+        "item": "Business cards, box of 500",
+        "qty": 1,
+        "total": 38,
+        "currency": "USD"
+      },
+      "result": null,
+      "required": [
+        {
+          "type": "authorization",
+          "action": "shop.order",
+          "min_amount": 38,
+          "currency": "USD",
+          "attested_by": "directory",
+          "not_accepted_because": [
+            "claim_revoked"
+          ]
+        }
+      ],
+      "learned": [
+        "An accountable ID (single-use) issued by https://directory.example",
+        "Authorization: shop.order up to USD 500, attested by the directory (not accepted: claim_revoked)",
+        "Principal verified by email control, none (simulated) assurance, attested by the directory",
+        "A passkey approval of this exact action, attested by the directory (not accepted: claim_revoked)"
+      ],
+      "not_learned": [
+        "The principal's name, email or any other identity",
+        "Which agent software this is, or what else it has done elsewhere",
+        "Whether this is the same agent as any earlier visit"
+      ],
+      "receipt_ref": "YWPC9RB5SLIU",
+      "case_ref": null,
+      "can_report": true
+    },
+    {
+      "seq": 6,
+      "ts": 1795343064,
+      "action": "shop.order",
+      "decision": "granted",
+      "reason": "authorized_and_approved",
+      "id": "id_qWgKrA6URMGPB0QI4w2XfQ",
+      "id_mode": "ephemeral",
+      "issuer": "https://directory.example",
+      "claims": [
+        {
+          "type": "authorization",
+          "attested_by": "directory",
+          "accepted": true,
+          "reason": null
+        },
+        {
+          "type": "principal_verification",
+          "attested_by": "directory",
+          "accepted": true,
+          "reason": null
+        },
+        {
+          "type": "approval",
+          "attested_by": "directory",
+          "accepted": true,
+          "reason": null
+        }
+      ],
+      "status_rev": 1,
+      "status_age": 1,
+      "params": {
+        "sku": "cards-5000",
+        "item": "Business cards, run of 5,000",
+        "qty": 1,
+        "total": 480,
+        "currency": "USD"
+      },
+      "result": {
+        "order_id": "ord_S8lMTJ99"
+      },
+      "required": null,
+      "learned": [
+        "An accountable ID (single-use) issued by https://directory.example",
+        "Authorization: shop.order up to USD 500, attested by the directory",
+        "Principal verified by email control, none (simulated) assurance, attested by the directory",
+        "A passkey approval of this exact action, attested by the directory"
+      ],
+      "not_learned": [
+        "The principal's name, email or any other identity",
+        "Which agent software this is, or what else it has done elsewhere",
+        "Whether this is the same agent as any earlier visit"
+      ],
+      "receipt_ref": "jAWq9k3M3XzA",
+      "case_ref": "case_QlKaTE6D",
+      "can_report": false
+    },
+    {
+      "seq": 5,
+      "ts": 1795343063,
+      "action": "shop.order",
+      "decision": "step_up",
+      "reason": "approval_required",
+      "id": "id_khpty0M8o8nNGRr8Wl4vOQ",
+      "id_mode": "ephemeral",
+      "issuer": "https://directory.example",
+      "claims": [
+        {
+          "type": "authorization",
+          "attested_by": "directory",
+          "accepted": true,
+          "reason": null
+        },
+        {
+          "type": "principal_verification",
+          "attested_by": "directory",
+          "accepted": true,
+          "reason": null
+        }
+      ],
+      "status_rev": 1,
+      "status_age": 0,
+      "params": {
+        "sku": "cards-5000",
+        "item": "Business cards, run of 5,000",
+        "qty": 1,
+        "total": 480,
+        "currency": "USD"
+      },
+      "result": null,
+      "required": [
+        {
+          "type": "approval",
+          "why": "orders above USD 50 need the principal's approval of the exact order"
+        }
+      ],
+      "learned": [
+        "An accountable ID (single-use) issued by https://directory.example",
+        "Authorization: shop.order up to USD 500, attested by the directory",
+        "Principal verified by email control, none (simulated) assurance, attested by the directory"
+      ],
+      "not_learned": [
+        "The principal's name, email or any other identity",
+        "Which agent software this is, or what else it has done elsewhere",
+        "Whether this is the same agent as any earlier visit"
+      ],
+      "receipt_ref": "_oVTbLCe69GV",
+      "case_ref": null,
+      "can_report": true
+    },
+    {
+      "seq": 4,
+      "ts": 1795343063,
+      "action": "shop.order",
+      "decision": "step_up",
+      "reason": "claim_required",
+      "id": "id_5SS67WJEtKqTgUeVQjU4pA",
+      "id_mode": "ephemeral",
+      "issuer": "https://directory.example",
+      "claims": [],
+      "status_rev": 1,
+      "status_age": 0,
+      "params": {
+        "sku": "cards-5000",
+        "item": "Business cards, run of 5,000",
+        "qty": 1,
+        "total": 480,
+        "currency": "USD"
+      },
+      "result": null,
+      "required": [
+        {
+          "type": "authorization",
+          "action": "shop.order",
+          "min_amount": 480,
+          "currency": "USD",
+          "attested_by": "directory",
+          "not_accepted_because": []
+        },
+        {
+          "type": "principal_verification",
+          "attested_by": "directory",
+          "not_accepted_because": []
+        }
+      ],
+      "learned": [
+        "An accountable ID (single-use) issued by https://directory.example"
+      ],
+      "not_learned": [
+        "The principal's name, email or any other identity",
+        "Which agent software this is, or what else it has done elsewhere",
+        "Whether this is the same agent as any earlier visit"
+      ],
+      "receipt_ref": "igj1qtCaXVMO",
+      "case_ref": null,
+      "can_report": true
+    },
+    {
+      "seq": 3,
+      "ts": 1795343063,
+      "action": "shop.order",
+      "decision": "granted",
+      "reason": "authorized",
+      "id": "id__Aiqe7IrxYHtt6AENILSCA",
+      "id_mode": "ephemeral",
+      "issuer": "https://directory.example",
+      "claims": [
+        {
+          "type": "authorization",
+          "attested_by": "directory",
+          "accepted": true,
+          "reason": null
+        },
+        {
+          "type": "principal_verification",
+          "attested_by": "directory",
+          "accepted": true,
+          "reason": null
+        }
+      ],
+      "status_rev": 1,
+      "status_age": 0,
+      "params": {
+        "sku": "cards-500",
+        "item": "Business cards, box of 500",
+        "qty": 1,
+        "total": 38,
+        "currency": "USD"
+      },
+      "result": {
+        "order_id": "ord_esHNjhfD"
+      },
+      "required": null,
+      "learned": [
+        "An accountable ID (single-use) issued by https://directory.example",
+        "Authorization: shop.order up to USD 500, attested by the directory",
+        "Principal verified by email control, none (simulated) assurance, attested by the directory"
+      ],
+      "not_learned": [
+        "The principal's name, email or any other identity",
+        "Which agent software this is, or what else it has done elsewhere",
+        "Whether this is the same agent as any earlier visit"
+      ],
+      "receipt_ref": "KG4gcr_Wvd4U",
+      "case_ref": null,
+      "can_report": true
+    },
+    {
+      "seq": 2,
+      "ts": 1795343063,
+      "action": "shop.order",
+      "decision": "step_up",
+      "reason": "claim_required",
+      "id": "id_mtuidYfS4Ma6BBBrCKUzUA",
+      "id_mode": "ephemeral",
+      "issuer": "https://directory.example",
+      "claims": [],
+      "status_rev": 1,
+      "status_age": 0,
+      "params": {
+        "sku": "cards-500",
+        "item": "Business cards, box of 500",
+        "qty": 1,
+        "total": 38,
+        "currency": "USD"
+      },
+      "result": null,
+      "required": [
+        {
+          "type": "authorization",
+          "action": "shop.order",
+          "min_amount": 38,
+          "currency": "USD",
+          "attested_by": "directory",
+          "not_accepted_because": []
+        },
+        {
+          "type": "principal_verification",
+          "attested_by": "directory",
+          "not_accepted_because": []
+        }
+      ],
+      "learned": [
+        "An accountable ID (single-use) issued by https://directory.example"
+      ],
+      "not_learned": [
+        "The principal's name, email or any other identity",
+        "Which agent software this is, or what else it has done elsewhere",
+        "Whether this is the same agent as any earlier visit"
+      ],
+      "receipt_ref": "kkV5mKAOb5Mz",
+      "case_ref": null,
+      "can_report": true
+    },
+    {
+      "seq": 1,
+      "ts": 1795343063,
+      "action": "shop.quote",
+      "decision": "granted",
+      "reason": "valid_id",
+      "id": "id_IJSHe3_wwD83HydmBTqryA",
+      "id_mode": "ephemeral",
+      "issuer": "https://directory.example",
+      "claims": [],
+      "status_rev": 1,
+      "status_age": 0,
+      "params": {
+        "sku": "cards-500",
+        "item": "Business cards, box of 500",
+        "qty": 1,
+        "total": 38,
+        "currency": "USD"
+      },
+      "result": {
+        "quote_id": "q__RPk1NOe"
+      },
+      "required": null,
+      "learned": [
+        "An accountable ID (single-use) issued by https://directory.example"
+      ],
+      "not_learned": [
+        "The principal's name, email or any other identity",
+        "Which agent software this is, or what else it has done elsewhere",
+        "Whether this is the same agent as any earlier visit"
+      ],
+      "receipt_ref": "WZCUoy2FLnvX",
+      "case_ref": null,
+      "can_report": true
+    }
+  ],
+  "orders": [
+    {
+      "id": "ord_S8lMTJ99",
+      "ts": 1795343064,
+      "sku": "cards-5000",
+      "qty": 1,
+      "total": 480,
+      "currency": "USD",
+      "approved": 1
+    },
+    {
+      "id": "ord_esHNjhfD",
+      "ts": 1795343063,
+      "sku": "cards-500",
+      "qty": 1,
+      "total": 38,
+      "currency": "USD",
+      "approved": 0
+    }
+  ],
+  "sample_note": "Synthetic sample data. Not live."
+}

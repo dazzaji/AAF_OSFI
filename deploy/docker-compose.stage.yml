@@ -1,0 +1,23 @@
+# Private staging override. Use with a scratch project name and never with the
+# public env file:
+#   AAF_BUILD=<short commit> AAF_ENV_FILE=/abs/path/stage.env \
+#     docker compose -p aaf-osfi-stage -f deploy/docker-compose.yml -f deploy/docker-compose.stage.yml up -d --no-build
+#
+# Both services share one network namespace, so "localhost:14100" and
+# "localhost:14200" mean the same thing to the directory, to the shop, and
+# (through an SSH tunnel to the host's loopback) to a browser. That makes the
+# browser's origin equal the configured WebAuthn origin before any public DNS
+# exists. The env file must set AAF_STAGING=1.
+services:
+  directory:
+    environment:
+      AAF_DIRECTORY_PORT: "14100"
+    ports:
+      - "127.0.0.1:14100:14100"
+      - "127.0.0.1:14200:14200"
+  shop:
+    network_mode: "service:directory"
+    networks: !reset null
+    environment:
+      AAF_SHOP_PORT: "14200"
+    depends_on: { directory: { condition: service_healthy } }

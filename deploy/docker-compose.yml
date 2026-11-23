@@ -1,0 +1,75 @@
+# The pilot on one host: directory + shop, each with its own state and key.
+# Nothing is published on a host port; a tunnel or reverse proxy goes in front
+# (see docs/DEPLOYING.md).
+#
+# This file never builds. Load the image first, then name it and the env file:
+#   AAF_BUILD=<short commit> AAF_ENV_FILE=/abs/path/pilot.env \
+#     docker compose -p aaf-osfi -f deploy/docker-compose.yml up -d --no-build
+# Rollback (data volumes are kept):
+#   docker compose -p aaf-osfi -f deploy/docker-compose.yml --profile tunnel stop
+name: aaf-osfi
+
+x-app: &app
+  image: aaf-osfi:${AAF_BUILD:?Set AAF_BUILD to the image tag}
+  pull_policy: never              # only the image that was loaded and reviewed
+  env_file: ${AAF_ENV_FILE:?Set AAF_ENV_FILE to the env file, kept outside Git}
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  mem_limit: 384m
+  cpus: 0.5
+  pids_limit: 128
+  logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+services:
+  directory:
+    <<: *app
+    command: ["node", "src/directory/server.js"]
+    environment:
+      AAF_DIRECTORY_PORT: "4100"
+      AAF_DIRECTORY_DATA: /data
+    volumes:
+      - directory-data:/data
+      - ${AAF_MAIL_SECRETS_DIR:-./no-mail-secrets}:/run/aaf-mail:ro   # holds only the mail key file, if any
+      - ../skins:/app/skins:ro          # drop a new skin file here; it appears without a restart
+      - ../datasets:/app/datasets:ro
+    healthcheck: { test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+process.env.AAF_DIRECTORY_PORT+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 15s, timeout: 5s, retries: 4 }
+    networks: [pilot]
+  shop:
+    <<: *app
+    command: ["node", "src/shop/server.js"]
+    environment:
+      AAF_SHOP_PORT: "4200"
+      AAF_SHOP_DATA: /data
+      AAF_SHOP_POLICY: /app/config/shop-policy.json
+    volumes:
+      - shop-data:/data
+      - ../skins:/app/skins:ro
+      - ../datasets:/app/datasets:ro
+      - ../config:/app/config:ro        # edit shop-policy.json to change thresholds while running
+    healthcheck: { test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+process.env.AAF_SHOP_PORT+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 15s, timeout: 5s, retries: 4 }
+    networks: [pilot]
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.3@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39
+    profiles: [tunnel]
+    command: ["tunnel", "--no-autoupdate", "run", "--token-file", "/run/secrets/tunnel_token"]
+    secrets: [tunnel_token]           # a file, so the token is not in the environment or in `docker inspect`
+    depends_on: { directory: { condition: service_healthy }, shop: { condition: service_healthy } }
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    networks: [pilot]
+
+secrets:
+  tunnel_token:
+    file: ${AAF_TUNNEL_TOKEN_FILE:-./unused-tunnel-token}
+
+volumes: { directory-data: {}, shop-data: {} }
+networks: { pilot: {} }
