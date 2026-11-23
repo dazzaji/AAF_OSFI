@@ -194,7 +194,7 @@ Only after Riley's passkey confirmation does the agent learn it is registered.
 
 Riley's Directory page after the approval.
 
-1. The agent is registered. The Directory keeps only the fingerprint of its key.
+1. Correction to the screen copy. The Directory stores the public key and its fingerprint. The private key stays with the agent.
 2. One authorization is active: shop.order, up to USD 500.
 
 ## Scene 4: The Shop checks a fresh ID, nothing more
@@ -521,7 +521,7 @@ Riley's Directory page, signed in again as principal.
 - A real authority request or legal process. The release step is simulated and says so on screen.
 - Real purchases or payments. Every order is fictional.
 
-**From the hosted pilot.** In the owner's test of the hosted pilot on 23 November 2026 (version 0.2.0), the invitation arrived by email, the passkey was saved as a new entry in 1Password, and Codex at the command line went from the copied message to the USD 38 quote, then through the approved USD 480 order, a declined order, withdrawal and revocation. Both refusals after revocation were seen there too. Claude Code and Codex in their desktop apps, and the incident report and release, were still to be run in that test. It also found rough edges this rehearsal does not show: a first-time visitor cannot yet request an invitation themselves, and Codex does not keep the installed skill between chats.
+**From the hosted pilot.** In the hosted v0.2.0 test on 23 November 2026, an emailed invitation led to a new 1Password passkey and a Codex CLI registration. The USD 38 quote disclosed a single-use agent ID and zero claims. The USD 480 order disclosed ordering authorization, how the account holder was verified, and approval of that exact order. The owner also tested decline, withdrawal and both revocation checks. After revocation, a request for 150 flyers yielded no quote. The catalog lists packs of 100, so two packs would cover 150 at a USD 44 list price. Desktop setup and incident follow-up were deferred in that run. Enrollment is invite-only, and Codex skill persistence still needs verification across sessions.
 
 ## Run it yourself
 

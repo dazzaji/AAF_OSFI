@@ -30,7 +30,7 @@ A person finds the pilot, enrolls with a passkey and hands one message to their 
 - **The Shop checks an ID, not a person.** A quote needs only a fresh, single-use ID from a Directory the Shop trusts. The Shop's own screen lists what it did not learn, and the person's identity is on that list.
 - **Authority is a separate claim.** For an order the Shop asks for more: proof that the person allowed this kind of spending, vouched for by the Directory.
 - **Approval is exact.** Above USD 50 the Shop wants the person's passkey approval of that one order. The approval names the item and the total, and it cannot be reused.
-- **There are two levers.** Withdrawing one permission stops orders while a quote still works. Revoking the agent ends everything new.
+- **There are two levers.** Withdrawing one permission stops orders while a quote still works. Revoking the agent blocks fresh quotes and orders that require an ID. The catalog stays public.
 - **Revocation shows up in two places.** The Shop rejects an ID it was given before the revocation, and the Directory refuses to issue a new one. The walkthrough shows both and keeps them apart.
 - **Accountability arrives without exposure.** The Shop holds a signed receipt and never an identity. A Directory operator can connect the two for one case, and the person is told.
 
@@ -63,6 +63,8 @@ Local rehearsal with stand-in passkeys · 23 November 2026 · source commit 445d
 The screenshots come from an actual run of the reference implementation on a local copy, with its own ports and disposable data. Three stand-ins were used and are labelled on screen: Chrome's virtual authenticator approved each passkey prompt, the invitation link was shown on screen instead of emailed, and the identity is synthetic. Agent requests and results are the `aaf-agent` tool's own output. Every order is fictional.
 
 The walkthrough ends with [what the rehearsal showed and what it did not](WALKTHROUGH.md#what-this-rehearsal-showed-and-what-it-did-not).
+
+The [Codex walkthrough](../codex/WALKTHROUGH.md) also shows a declined order, a resumed approval, and reconnecting with a new registration after revocation.
 
 ## Files in this folder
 
