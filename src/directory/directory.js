@@ -354,7 +354,16 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
   };
   // The signed parameters of an order, in the order a person reads them. Any
   // parameter this pilot does not know is still shown, so nothing signed is hidden.
-  const orderLines = (params = {}) => { const p = params ?? {}; const known = ['item', 'sku', 'qty', 'total', 'currency']; return [...(p.item !== undefined || p.sku !== undefined ? [['Item', [p.item, p.sku && `(${p.sku})`].filter(Boolean).join(' ')]] : []), ...(p.qty !== undefined ? [['Quantity', String(p.qty)]] : []), ...(p.total !== undefined ? [['Total', typeof p.total === 'number' ? fmtMoney(p.total, p.currency ?? '') : String(p.total)]] : []), ...Object.entries(p).filter(([k]) => !known.includes(k)).map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)])]; };
+  const orderLines = (params = {}) => {
+    const p = params ?? {}; const show = (v) => (v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v));
+    const known = ['item', 'sku', 'qty', 'total', ...(p.total !== undefined ? ['currency'] : [])];
+    return [
+      ...(p.item !== undefined || p.sku !== undefined ? [['Item', [p.item !== undefined && show(p.item), p.sku !== undefined && `(${show(p.sku)})`].filter(Boolean).join(' ')]] : []),
+      ...(p.qty !== undefined ? [['Quantity', show(p.qty)]] : []),
+      ...(p.total !== undefined ? [['Total', typeof p.total === 'number' ? fmtMoney(p.total, typeof p.currency === 'string' ? p.currency : '') : show(p.total)]] : []),
+      ...Object.entries(p).filter(([k]) => !known.includes(k)).map(([k, v]) => [k, show(v)]),
+    ];
+  };
   const normPolicy = (p) => ({ share_verification: p?.share_verification !== false, share_identity_with: Array.isArray(p?.share_identity_with) ? p.share_identity_with.filter((o) => typeof o === 'string').slice(0, 20) : [] });
 
   const OPS = {
@@ -805,7 +814,11 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
       db.run("INSERT INTO meta (k, v) VALUES ('operator_link_sent', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", String(nowSec()));
       db.run('INSERT INTO mail_sends (day, ts) VALUES (?,?)', day, nowSec());
       logEvent('operator.link_emailed', {});
-      return newOperatorInvite();
+      // The link the owner may already hold keeps working: a new one is made
+      // only when none is left that is good for at least another hour.
+      const live = db.get(`SELECT token FROM invites WHERE is_operator = 1 AND used_at IS NULL AND state IN ${REDEEMABLE} AND exp > ? ORDER BY created DESC LIMIT 1`, nowSec() + 3600)?.token ?? newOperatorInvite();
+      db.run('UPDATE invites SET delivery = ? WHERE token = ?', 'bootstrap link; also emailed to the configured operator mailbox', live);
+      return live;
     });
     if (token) transport.send({ to: cfg.operatorEmail.toLowerCase(), subject: `Operator setup link for ${cfg.name}`, body: `Someone asked ${cfg.name} to send its one-time operator setup link to this mailbox, which is the operator address the service was configured with.\n\nIf that was you, open this link within 7 days and create the operator passkey:\n${cfg.url}/?invite=${token}\n\nIf it was not you, ignore this message. The link works once and only until an operator is enrolled.`, idemKey: 'aaf-operator-' + token.slice(0, 20) }).catch(() => { /* never log provider text, addresses, links or keys */ });
     return answer;

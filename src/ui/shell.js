@@ -94,14 +94,15 @@ function drawStrip() {
   if (SURFACE !== 'directory' || !s) { strip.hidden = true; return; }
   const role = state.view.viewer?.role ?? 'public';
   const agents = (state.view.principal?.agents ?? []).filter((a) => a.status === 'active').length;
-  const kind = role === 'public' ? 'public' : agents === 0 ? 'connect' : 'slim';
+  // The operator's account is mainly for running the directory, so it gets the one-row form.
+  const kind = role === 'public' ? 'public' : agents === 0 && role !== 'operator' ? 'connect' : 'slim';
   const open = stripOpen ?? (kind === 'connect');
   const sig = [kind, open, s.agent_message, s.zip_url, s.zip_sha256].join('|');
   if (strip.dataset.sig === sig) return; // unchanged: keep the person's selection and focus
   strip.dataset.sig = sig; strip.hidden = false; strip.className = `setup ${kind}${open ? ' open' : ''}`;
   const toggle = el('button', { class: 'btn', id: 'setup-toggle', 'aria-expanded': String(open), onclick: () => { stripOpen = !open; drawStrip(); } }, kind === 'slim' ? (open ? 'Hide' : 'Show how') : open ? 'Hide steps' : 'Get started');
   const head = kind === 'slim'
-    ? el('div', { class: 'setup-head' }, el('strong', {}, 'Connect my agent'), el('span', { class: 'setup-sub' }, 'Add another agent with the same message.'), el('span', { class: 'grow' }), toggle)
+    ? el('div', { class: 'setup-head' }, el('strong', {}, 'Connect my agent'), el('span', { class: 'setup-sub' }, agents === 0 ? 'Register an agent for this account with the setup message.' : 'Add another agent with the same message.'), el('span', { class: 'grow' }), toggle)
     : el('div', { class: 'setup-head' },
       el('div', { class: 'setup-title' }, el('strong', {}, kind === 'connect' ? 'Connect my agent' : 'Give this link to your agent'), el('a', { class: 'setup-link', id: 'setup-skill', href: s.skill_url, target: '_blank', rel: 'noopener noreferrer' }, s.skill_url)),
       el('span', { class: 'grow' }),
@@ -144,7 +145,8 @@ async function confirmOp(op, args, { onDone, declineLabel, onDecline } = {}) {
   if (mine !== flow) return; // another flow started meanwhile; never replace its screen
   const note = el('p', { class: 'note', hidden: '' });
   const body = el('div', {});
-  const draw = () => body.replaceChildren(details(started.display), note);
+  // The whole screen follows the description in force: its title as well as its lines.
+  const draw = () => { body.replaceChildren(details(started.display), note); const h = modalHost.querySelector('.modal h2'); if (h && h.textContent !== started.display.title) h.textContent = started.display.title; };
   const stale = () => Date.now() - startedAt > ((started.expires_in ?? 180) - 10) * 1000;
   // A passkey check that ran out of time is replaced by a fresh one for the
   // same operation. The server describes the operation again, this screen is
