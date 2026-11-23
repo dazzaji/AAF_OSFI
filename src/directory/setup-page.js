@@ -6,11 +6,16 @@
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // About five sentences that stand on their own when pasted into an agent.
-export const agentMessage = (i) => [
+// A signed-in principal has already redeemed their invitation, so their copy
+// tells the agent to register straight away; a visitor's copy tells it to set
+// up and then wait until the person is enrolled.
+export const agentMessage = (i, enrolled = false) => [
   `Please connect yourself to the Accountable Agents Framework (AAF) pilot, a public sandbox where an AI agent gets its own accountable ID and uses it at a fictional print shop.`,
   `Read your instructions at ${i.skill_url} and follow them.`,
   `They have you download the versioned AAF agent ZIP from ${i.zip_url}, check its SHA-256, and tell me what you will install and where before you install it.`,
-  `I need an invitation to the Directory first; once I have redeemed it, I will approve your registration with my passkey in my browser, so never ask me for the passkey itself.`,
+  enrolled
+    ? `I have redeemed my invitation and I am signed in to the Directory in my browser, so ask to be registered as soon as you are set up; I will approve it there with my passkey, so never ask me for the passkey itself.`
+    : `I need an invitation to the Directory before you can be registered, so set yourself up, then wait until I tell you I have redeemed it; I will approve your registration with my passkey in my browser, so never ask me for the passkey itself.`,
   `When you are registered, get me a quote for 500 business cards from the ${i.shop_name}.`,
 ].join(' ');
 
@@ -58,7 +63,7 @@ export function renderSetupPage(i) {
 <section id="desktop"><h2>2a. Connect a desktop agent</h2>
 <p>Works in a desktop agent such as <strong>Claude Code</strong> or <strong>Codex</strong>, or in any agent that can run commands on your computer. You do not type any Terminal commands.</p>
 <ol>
-<li><strong>Copy this message</strong> and paste it into a new local session with your agent (in Claude Code or Codex desktop: start a new chat for a folder on this computer and paste it as your first message).
+<li><strong>Copy this message</strong>${i.enrolled ? ' (you are signed in, so it tells the agent you are already enrolled)' : ' (sign in first and it will tell the agent you are already enrolled)'} and paste it into a new local session with your agent (in Claude Code or Codex desktop: start a new chat for a folder on this computer and paste it as your first message).
 <div class="copybox"><textarea id="agent-message" readonly rows="6">${esc(i.agent_message)}</textarea><div class="row"><button class="btn primary" data-copy="agent-message">Copy for my agent</button><a class="btn" href="${esc(i.zip_url)}">Download the AAF agent ZIP</a><span class="copied" hidden>Copied.</span></div></div>
 <p class="small">The agent reads its instructions at <a href="${esc(i.skill_url)}">${esc(i.skill_url)}</a>. Client ${esc(i.version)}, SHA-256 <code class="hash">${esc(i.zip_sha256)}</code>.</p></li>
 <li><strong>Permissions your app may ask for.</strong> The agent tells you what it will install and where. Your app may then ask you to allow four ordinary things: downloading the ZIP, writing two folders (the agent's skill folder and its key folder), running <code>node</code>, and opening a browser tab. These are expected. Nothing else is needed.</li>

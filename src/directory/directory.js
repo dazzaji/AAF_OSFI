@@ -109,9 +109,9 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
   const release = JSON.parse(fs.readFileSync(path.join(cfg.projectRoot, 'config/agent-release.json'), 'utf8'));
   const shopUrl = cfg.shopUrl ?? cfg.trustedCounterparties?.[0] ?? 'http://localhost:4200';
   const zipUrl = cfg.agentZipUrl && (cfg.mode === 'local' || cfg.staging) ? cfg.agentZipUrl : release.url;
-  const setupInfo = () => {
+  const setupInfo = (enrolled = false) => {
     const base = { version: release.version, zip_name: release.asset, zip_url: zipUrl, zip_sha256: release.sha256, skill_url: `${cfg.url}/skill.md`, guide_url: `${cfg.url}/setup`, source_url: release.source, directory_url: cfg.url, directory_name: cfg.name, shop_url: shopUrl, shop_name: cfg.shopName, node: release.node, paths: release.paths, operator_enrolled: !!db.get('SELECT 1 FROM principals WHERE is_operator = 1'), operator_link_by_email: transport.mode === 'resend' || transport.mode === 'smtp' };
-    return { ...base, agent_message: agentMessage(base) };
+    return { ...base, enrolled, agent_message: agentMessage(base, enrolled) };
   };
   // Plain words for what an authorization allows. The technical name stays visible as a detail.
   const ACTION_WORDS = { 'shop.order': { may: `Place fictional orders at the ${cfg.shopName}`, one: `Place one fictional order at the ${cfg.shopName}` } };
@@ -783,7 +783,7 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
     const text = fs.readFileSync(path.join(cfg.projectRoot, 'skill/aaf-agent/SKILL.md'), 'utf8').replace('<!--AAF_RELEASE-->', releaseBlock(info)).replaceAll(release.url, info.zip_url);
     send(ctx.res, 200, text, { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff' });
   });
-  app.get('/setup', (ctx) => send(ctx.res, 200, Buffer.from(renderSetupPage(setupInfo())), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'", 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' }));
+  app.get('/setup', (ctx) => send(ctx.res, 200, Buffer.from(renderSetupPage(setupInfo(!!session(ctx)))), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'", 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' }));
   app.get('/ui/setup.css', (ctx) => serveFile(ctx.res, path.join(uiDir, 'setup.css')));
   app.get('/ui/setup.js', (ctx) => serveFile(ctx.res, path.join(uiDir, 'setup.js')));
   // The owner's browser path on a new deployment: send the one-time operator
@@ -815,7 +815,7 @@ export async function createDirectory(cfg, { mailFetch } = {}) {
   // Display data only. No session tokens, credential identifiers or key material.
   function view(ctx) {
     const p = session(ctx);
-    const base = { surface: 'directory', meta: { name: cfg.name, url: cfg.url, mode: cfg.mode, now: nowSec() }, viewer: { role: p ? (p.is_operator ? 'operator' : 'principal') : 'public', identity: p?.identity_value ?? null }, practices: practices(), status: { rev: statusMeta.rev, published_at: statusMeta.iat, uri: `${cfg.url}/.well-known/aaf-status` }, setup: setupInfo(), public: { principals: db.get('SELECT COUNT(*) c FROM principals').c, agents: db.get('SELECT COUNT(*) c FROM agents').c, ids_issued: db.get("SELECT COUNT(*) c FROM issued WHERE kind='id'").c } };
+    const base = { surface: 'directory', meta: { name: cfg.name, url: cfg.url, mode: cfg.mode, now: nowSec() }, viewer: { role: p ? (p.is_operator ? 'operator' : 'principal') : 'public', identity: p?.identity_value ?? null }, practices: practices(), status: { rev: statusMeta.rev, published_at: statusMeta.iat, uri: `${cfg.url}/.well-known/aaf-status` }, setup: setupInfo(!!p), public: { principals: db.get('SELECT COUNT(*) c FROM principals').c, agents: db.get('SELECT COUNT(*) c FROM agents').c, ids_issued: db.get("SELECT COUNT(*) c FROM issued WHERE kind='id'").c } };
     if (!p) return base;
     const agents = db.all('SELECT * FROM agents WHERE principal_id = ? ORDER BY created DESC', p.id).map((a) => ({ id: a.id, name: a.name, harness: a.harness, fingerprint: a.fingerprint, status: a.status, created: a.created, revoked_at: a.revoked_at, revoked_by: a.revoked_by, policy: JSON.parse(a.policy), ids_issued: db.get("SELECT COUNT(*) c FROM issued WHERE agent_id = ? AND kind='id'", a.id).c, last_issued: db.get("SELECT MAX(iat) t FROM issued WHERE agent_id = ? AND kind='id'", a.id).t, grants: db.all('SELECT id, action, max_amount, currency, version, status, exp, revoked_at FROM grants WHERE agent_id = ? ORDER BY created DESC', a.id).map((g) => ({ ...g, label: mayText(g.action) })) }));
     base.principal = {

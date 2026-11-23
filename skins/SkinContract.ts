@@ -62,7 +62,7 @@ export interface DirectoryData {
   practices: Record<string, any>;              // what the directory publishes about itself (DR-1)
   status: { rev: number; published_at: number; uri: string };
   // First-time setup, for display. The shell owns the Copy button and the links.
-  setup?: { version: string; skill_url: string; guide_url: string; zip_url: string; zip_sha256: string; source_url: string; shop_url: string; shop_name: string; agent_message: string; operator_enrolled: boolean; paths: Record<string, { label: string; status: string; how: string }> };
+  setup?: { version: string; skill_url: string; guide_url: string; zip_url: string; zip_sha256: string; source_url: string; shop_url: string; shop_name: string; agent_message: string; enrolled: boolean; operator_enrolled: boolean; paths: Record<string, { label: string; status: string; how: string }> };
   public: { principals: number; agents: number; ids_issued: number };
   principal?: {
     identity: { type: string; value: string; method: string; assurance: string };

@@ -30,7 +30,7 @@ node aaf-agent.mjs status
 node aaf-agent.mjs quote cards-500
 ```
 
-The ZIP's SHA-256 is `ddf95e363fd1bc822339ee0a0af5b3733c336fe84c610fa4955df47a14177ced`. It is also published in the [release notes](https://github.com/dazzaji/AAF_OSFI/releases/tag/v0.2.0) and in the Directory's `/skill.md`. The ZIP holds the client (bundled, so there is no `npm install`), the same client as a local MCP server, the agent skill, a readme, the license and notices. The [setup guide](https://aaf-dir.civics.com/setup#ready) lists which paths have been verified from a fresh setup.
+The ZIP's SHA-256 is `fb704f01e5daff3c5ccfb9899cbb80035c811e38bb370e6369984b7b38fd2221`. It is also published in the [release notes](https://github.com/dazzaji/AAF_OSFI/releases/tag/v0.2.0) and in the Directory's `/skill.md`. The ZIP holds the client (bundled, so there is no `npm install`), the same client as a local MCP server, the agent skill, a readme, the license and notices. The [setup guide](https://aaf-dir.civics.com/setup#ready) lists which paths have been verified from a fresh setup.
 
 ## See the demo
 
